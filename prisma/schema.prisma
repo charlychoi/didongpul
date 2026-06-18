@@ -1,0 +1,243 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String    @map("password_hash")
+  role          String    @default("viewer")
+  centerScope   String    @default("ALL") @map("center_scope")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  lastLoginAt   DateTime? @map("last_login_at")
+
+  uploadBatches UploadBatch[]
+
+  @@map("users")
+}
+
+model UploadBatch {
+  id                  String   @id @default(cuid())
+  originalFilename    String   @map("original_filename")
+  fileHash            String   @map("file_hash")
+  uploadedById        String   @map("uploaded_by_id")
+  uploadedAt          DateTime @default(now()) @map("uploaded_at")
+  sourceType          String   @default("excel_upload") @map("source_type")
+  targetMonth         String?  @map("target_month")
+  detectedSheetsCount Int      @default(0) @map("detected_sheets_count")
+  status              String   @default("processing")
+  errorMessage        String?  @map("error_message")
+  rowCountTotal       Int      @default(0) @map("row_count_total")
+  duplicateCount      Int      @default(0) @map("duplicate_count")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  uploadedBy           User                  @relation(fields: [uploadedById], references: [id])
+  rawExcelRows         RawExcelRow[]
+  rawVisitLogs         RawVisitLog[]
+  educationAttendances EducationAttendance[]
+  surveyResponses      SurveyResponse[]
+  dataQualityLogs      DataQualityLog[]
+
+  @@map("upload_batches")
+}
+
+model RawExcelRow {
+  id            String   @id @default(cuid())
+  uploadBatchId String   @map("upload_batch_id")
+  sheetName     String   @map("sheet_name")
+  rowNumber     Int      @map("row_number")
+  rawJson       String   @map("raw_json")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  uploadBatch UploadBatch @relation(fields: [uploadBatchId], references: [id])
+
+  @@map("raw_excel_rows")
+}
+
+model RawVisitLog {
+  id               String   @id @default(cuid())
+  uploadBatchId    String   @map("upload_batch_id")
+  sheetName        String   @map("sheet_name")
+  rowNumber        Int      @map("row_number")
+  centerRaw        String?  @map("center_raw")
+  nameRaw          String?  @map("name_raw")
+  phoneRaw         String?  @map("phone_raw")
+  entryDatetimeRaw String?  @map("entry_datetime_raw")
+  exitDatetimeRaw  String?  @map("exit_datetime_raw")
+  dateRaw          String?  @map("date_raw")
+  entryHourRaw     String?  @map("entry_hour_raw")
+  exitHourRaw      String?  @map("exit_hour_raw")
+  visitCheckRaw    String?  @map("visit_check_raw")
+  yearRaw          String?  @map("year_raw")
+  monthRaw         String?  @map("month_raw")
+  rawJson          String   @map("raw_json")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  uploadBatch   UploadBatch    @relation(fields: [uploadBatchId], references: [id])
+  cleanVisitLog CleanVisitLog?
+
+  @@map("raw_visit_logs")
+}
+
+model CleanVisitLog {
+  id                   String    @id @default(cuid())
+  rawVisitId           String    @unique @map("raw_visit_id")
+  center               String
+  visitorNameMasked    String?   @map("visitor_name_masked")
+  visitorKey           String?   @map("visitor_key")
+  phoneHash            String?   @map("phone_hash")
+  entryDatetime        DateTime? @map("entry_datetime")
+  exitDatetime         DateTime? @map("exit_datetime")
+  visitDate            DateTime? @map("visit_date")
+  entryHour            Int?      @map("entry_hour")
+  exitHour             Int?      @map("exit_hour")
+  stayMinutes          Float?    @map("stay_minutes")
+  stayHours            Float?    @map("stay_hours")
+  year                 Int?
+  month                Int?
+  weekday              Int?
+  isLongStay           Boolean   @default(false) @map("is_long_stay")
+  isInvalidStay        Boolean   @default(false) @map("is_invalid_stay")
+  isDuplicateSuspected Boolean   @default(false) @map("is_duplicate_suspected")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  rawVisitLog RawVisitLog @relation(fields: [rawVisitId], references: [id])
+
+  @@map("clean_visit_logs")
+}
+
+model EducationAttendance {
+  id                    String    @id @default(cuid())
+  uploadBatchId         String    @map("upload_batch_id")
+  sheetName             String    @map("sheet_name")
+  rowNumber             Int       @map("row_number")
+  center                String?
+  category              String?
+  programName           String?   @map("program_name")
+  educationDate         DateTime? @map("education_date")
+  startTime             String?   @map("start_time")
+  endTime               String?   @map("end_time")
+  statusNote            String?   @map("status_note")
+  participantNameMasked String?   @map("participant_name_masked")
+  participantKey        String?   @map("participant_key")
+  phoneHash             String?   @map("phone_hash")
+  emailHash             String?   @map("email_hash")
+  attendanceStatus      String?   @map("attendance_status")
+  year                  Int?
+  month                 Int?
+  rawJson               String    @map("raw_json")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  uploadBatch UploadBatch @relation(fields: [uploadBatchId], references: [id])
+
+  @@map("education_attendance")
+}
+
+model DailyCenterSummary {
+  id                 String   @id @default(cuid())
+  date               DateTime
+  center             String
+  visitCount         Int      @default(0) @map("visit_count")
+  uniqueVisitorCount Int      @default(0) @map("unique_visitor_count")
+  newVisitorCount    Int      @default(0) @map("new_visitor_count")
+  repeatVisitorCount Int      @default(0) @map("repeat_visitor_count")
+  avgStayMinutes     Float?   @map("avg_stay_minutes")
+  medianStayMinutes  Float?   @map("median_stay_minutes")
+  longStayCount      Int      @default(0) @map("long_stay_count")
+  entry9Count        Int      @default(0) @map("entry_9_count")
+  entry10Count       Int      @default(0) @map("entry_10_count")
+  entry11Count       Int      @default(0) @map("entry_11_count")
+  entry12Count       Int      @default(0) @map("entry_12_count")
+  entry13Count       Int      @default(0) @map("entry_13_count")
+  entry14Count       Int      @default(0) @map("entry_14_count")
+  entry15Count       Int      @default(0) @map("entry_15_count")
+  entry16Count       Int      @default(0) @map("entry_16_count")
+  entry17Count       Int      @default(0) @map("entry_17_count")
+  entry18Count       Int      @default(0) @map("entry_18_count")
+  entry19Count       Int      @default(0) @map("entry_19_count")
+  entry20Count       Int      @default(0) @map("entry_20_count")
+  entry21Count       Int      @default(0) @map("entry_21_count")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@unique([date, center])
+  @@map("daily_center_summary")
+}
+
+model MonthlyCenterSummary {
+  id                       String   @id @default(cuid())
+  year                     Int
+  month                    Int
+  center                   String
+  visitCount               Int      @default(0) @map("visit_count")
+  uniqueVisitorCount       Int      @default(0) @map("unique_visitor_count")
+  avgVisitsPerVisitor       Float?   @map("avg_visits_per_visitor")
+  avgDailyVisitCount       Float?   @map("avg_daily_visit_count")
+  avgStayMinutes           Float?   @map("avg_stay_minutes")
+  longStayCount            Int      @default(0) @map("long_stay_count")
+  educationAttendanceCount Int      @default(0) @map("education_attendance_count")
+  topProgramName           String?  @map("top_program_name")
+  dataQualityScore         Float?   @map("data_quality_score")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  @@unique([year, month, center])
+  @@map("monthly_center_summary")
+}
+
+model SurveyResponse {
+  id                      String    @id @default(cuid())
+  uploadBatchId           String    @map("upload_batch_id")
+  sheetName               String    @map("sheet_name")
+  rowNumber               Int       @map("row_number")
+  center                  String?
+  respondentNameMasked    String?   @map("respondent_name_masked")
+  respondentKey           String?   @map("respondent_key")
+  phoneHash               String?   @map("phone_hash")
+  gender                  String?
+  ageGroup                Int?      @map("age_group")
+  residence               String?
+  howFound                String?   @map("how_found")
+  visitCount              String?   @map("visit_count")
+  participatedPrograms    String?   @map("participated_programs")
+  favoriteProgram         String?   @map("favorite_program")
+  programSatisfaction     String?   @map("program_satisfaction")
+  operationSatisfaction   String?   @map("operation_satisfaction")
+  digitalHelpSatisfaction String?   @map("digital_help_satisfaction")
+  willReturn              String?   @map("will_return")
+  responseDate            DateTime? @map("response_date")
+  year                    Int?
+  month                   Int?
+  rawJson                 String    @map("raw_json")
+  createdAt               DateTime  @default(now()) @map("created_at")
+
+  uploadBatch UploadBatch @relation(fields: [uploadBatchId], references: [id])
+
+  @@map("survey_responses")
+}
+
+model DataQualityLog {
+  id              String   @id @default(cuid())
+  uploadBatchId   String   @map("upload_batch_id")
+  issueType       String   @map("issue_type")
+  severity        String
+  sheetName       String?  @map("sheet_name")
+  rowNumber       Int?     @map("row_number")
+  columnName      String?  @map("column_name")
+  rawValue        String?  @map("raw_value")
+  normalizedValue String?  @map("normalized_value")
+  message         String
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  uploadBatch UploadBatch @relation(fields: [uploadBatchId], references: [id])
+
+  @@map("data_quality_logs")
+}
