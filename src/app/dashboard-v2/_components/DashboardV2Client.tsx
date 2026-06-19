@@ -64,13 +64,13 @@ const CENTERS = [
 ];
 
 const VIEW_LABEL: Record<View, string> = {
-  overview: "종합 현황",
-  centers: "센터 비교",
-  visitors: "방문자 분석",
-  programs: "프로그램 분석",
-  satisfaction: "만족도 분석",
-  marketing: "홍보/웹 유입",
-  operations: "운영 점검",
+  overview: "운영 종합",
+  centers: "센터 성과",
+  visitors: "이용자 분석",
+  programs: "프로그램 수요",
+  satisfaction: "만족도 인사이트",
+  marketing: "홍보/웹 전환",
+  operations: "운영 리스크",
 };
 
 const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2", "#64748b"];
@@ -308,7 +308,7 @@ export default function DashboardV2Client({ view }: { view: View }) {
         <div>
           <p className="text-xs font-medium text-blue-700">API 기반 대시보드 v2</p>
           <h1 className="text-2xl font-bold text-gray-900">{VIEW_LABEL[view]}</h1>
-          <p className="mt-1 text-sm text-gray-500">강동, 도봉, 동대문센터 기준</p>
+          <p className="mt-1 text-sm text-gray-500">엑셀 업로드 없이 외부 API를 직접 조회합니다.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setPreset("today")} className="px-3 py-2 text-sm rounded-md border border-gray-200 bg-white hover:bg-gray-50">오늘</button>
@@ -332,7 +332,7 @@ export default function DashboardV2Client({ view }: { view: View }) {
           <Download className="h-4 w-4" />
         </button>
         <div className="ml-auto text-xs text-gray-500">
-          마지막 동기화: {data?.sync.lastFetchedAt ? new Date(data.sync.lastFetchedAt).toLocaleString("ko-KR") : "-"}
+          마지막 API 조회: {data?.sync.lastFetchedAt ? new Date(data.sync.lastFetchedAt).toLocaleString("ko-KR") : "-"}
         </div>
       </div>
 

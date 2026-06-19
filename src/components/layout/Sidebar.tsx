@@ -78,69 +78,6 @@ const navItems = [
     ),
   },
   {
-    href: "/dashboard-v2/overview",
-    label: "v2 종합 현황",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 13h5v7H4v-7zm6-9h5v16h-5V4zm6 5h4v11h-4V9z" />
-      </svg>
-    ),
-  },
-  {
-    href: "/dashboard-v2/centers",
-    label: "v2 센터 비교",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21h18M5 21V7l4-3 4 3v14M15 21V9l4-2v14M8 10h1m-1 4h1m9-1h1" />
-      </svg>
-    ),
-  },
-  {
-    href: "/dashboard-v2/visitors",
-    label: "v2 방문자 분석",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-4-4h-1M9 20H4v-2a4 4 0 014-4h1m0-4a4 4 0 100-8 4 4 0 000 8zm8 0a4 4 0 100-8 4 4 0 000 8z" />
-      </svg>
-    ),
-  },
-  {
-    href: "/dashboard-v2/programs",
-    label: "v2 프로그램 분석",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5h6M9 9h6M7 13h10M7 17h10M5 3h14a1 1 0 011 1v16l-4-2-4 2-4-2-4 2V4a1 1 0 011-1z" />
-      </svg>
-    ),
-  },
-  {
-    href: "/dashboard-v2/satisfaction",
-    label: "v2 만족도 분석",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.55 4.77h5.017c.969 0 1.371 1.24.588 1.81l-4.059 2.949 1.55 4.77c.3.921-.755 1.688-1.538 1.118L12 15.395l-4.059 2.949c-.783.57-1.838-.197-1.538-1.118l1.55-4.77-4.059-2.949c-.783-.57-.38-1.81.588-1.81h5.017l1.55-4.77z" />
-      </svg>
-    ),
-  },
-  {
-    href: "/dashboard-v2/marketing",
-    label: "v2 홍보/웹 유입",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19a1 1 0 01-1.447.894L4 17.118A2 2 0 013 15.329V8.671a2 2 0 011-1.789l5.553-2.776A1 1 0 0111 5.882zM15 8l4-2v12l-4-2V8z" />
-      </svg>
-    ),
-  },
-  {
-    href: "/dashboard-v2/operations",
-    label: "v2 운영 점검",
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-      </svg>
-    ),
-  },
-  {
     href: "/dashboard/settings",
     label: "계정 설정",
     icon: (

@@ -34,7 +34,7 @@ async function getBatches() {
 async function getSyncedDbStats() {
   const CENTERS = ["강동센터", "도봉센터", "동대문센터"];
 
-  const [visitGroups, surveyGroups, educationGroups, totalGroups, latestVisits] = await Promise.all([
+  const [visitGroups, surveyGroups, educationGroups, latestVisits] = await Promise.all([
     prisma.cleanVisitLog.groupBy({
       by: ["center"],
       where: { center: { in: CENTERS } },
@@ -50,11 +50,6 @@ async function getSyncedDbStats() {
       where: { center: { in: CENTERS } },
       _count: { id: true },
     }),
-    prisma.apiTotalRecord.groupBy({
-      by: ["center"],
-      where: { center: { in: CENTERS } },
-      _count: { id: true },
-    }),
     prisma.cleanVisitLog.findMany({
       where: { center: { in: CENTERS } },
       select: { center: true, visitDate: true },
@@ -62,6 +57,11 @@ async function getSyncedDbStats() {
       distinct: ["center"],
     }),
   ]);
+  const totalGroups = await prisma.apiTotalRecord.groupBy({
+    by: ["center"],
+    where: { center: { in: CENTERS } },
+    _count: { id: true },
+  }).catch(() => []);
 
   return CENTERS.map((centerName) => ({
     center: centerName,
