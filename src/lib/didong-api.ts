@@ -70,6 +70,8 @@ interface PagedResponse<T> {
   meta: { current_page: number; last_page: number; total: number };
 }
 
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function fetchPage<T>(
   path: string,
   params: Record<string, string | number>
@@ -78,14 +80,41 @@ async function fetchPage<T>(
     Object.entries(params).map(([k, v]) => [k, String(v)])
   ).toString();
   const url = `${BASE_URL}${path}?${qs}`;
-  const res = await fetch(url, {
-    headers: { "X-API-KEY": API_KEY },
-    next: { revalidate: 0 },
-  });
-  if (!res.ok) {
-    throw new Error(`didong API ${path} 오류: ${res.status} ${await res.text()}`);
+
+  // 429 발생 시 최대 3회 재시도 (지수 백오프)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(url, {
+      headers: { "X-API-KEY": API_KEY },
+      next: { revalidate: 0 },
+    });
+    if (res.status === 429) {
+      const wait = 2000 * (attempt + 1); // 2s, 4s, 6s
+      await delay(wait);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`didong API ${path} 오류: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
   }
-  return res.json();
+  throw new Error(`didong API ${path} rate limit 초과 (429)`);
+}
+
+async function fetchAll<T>(
+  path: string,
+  baseParams: Record<string, string | number>
+): Promise<T[]> {
+  const results: T[] = [];
+  let page = 1;
+  let lastPage = 1;
+  do {
+    const resp = await fetchPage<T>(path, { ...baseParams, page });
+    results.push(...resp.data);
+    lastPage = resp.meta.last_page;
+    page++;
+    if (page <= lastPage) await delay(500); // 페이지 간 500ms 간격
+  } while (page <= lastPage);
+  return results;
 }
 
 export async function fetchAllVisits(
@@ -93,21 +122,11 @@ export async function fetchAllVisits(
   startedAt: string,
   finishedAt: string
 ): Promise<DidongVisit[]> {
-  const results: DidongVisit[] = [];
-  let page = 1;
-  let lastPage = 1;
-  do {
-    const resp = await fetchPage<DidongVisit>("/external/visits", {
-      center_type: centerCode,
-      started_at: startedAt,
-      finished_at: finishedAt,
-      page,
-    });
-    results.push(...resp.data);
-    lastPage = resp.meta.last_page;
-    page++;
-  } while (page <= lastPage);
-  return results;
+  return fetchAll<DidongVisit>("/external/visits", {
+    center_type: centerCode,
+    started_at: startedAt,
+    finished_at: finishedAt,
+  });
 }
 
 export async function fetchAllSurveys(
@@ -115,21 +134,11 @@ export async function fetchAllSurveys(
   startedAt: string,
   finishedAt: string
 ): Promise<DidongSurvey[]> {
-  const results: DidongSurvey[] = [];
-  let page = 1;
-  let lastPage = 1;
-  do {
-    const resp = await fetchPage<DidongSurvey>("/external/surveys", {
-      center_type: centerCode,
-      started_at: startedAt,
-      finished_at: finishedAt,
-      page,
-    });
-    results.push(...resp.data);
-    lastPage = resp.meta.last_page;
-    page++;
-  } while (page <= lastPage);
-  return results;
+  return fetchAll<DidongSurvey>("/external/surveys", {
+    center_type: centerCode,
+    started_at: startedAt,
+    finished_at: finishedAt,
+  });
 }
 
 export async function fetchAllWaitings(
@@ -137,19 +146,9 @@ export async function fetchAllWaitings(
   startedAt: string,
   finishedAt: string
 ): Promise<DidongWaiting[]> {
-  const results: DidongWaiting[] = [];
-  let page = 1;
-  let lastPage = 1;
-  do {
-    const resp = await fetchPage<DidongWaiting>("/external/waitings", {
-      center_type: centerCode,
-      started_at: startedAt,
-      finished_at: finishedAt,
-      page,
-    });
-    results.push(...resp.data);
-    lastPage = resp.meta.last_page;
-    page++;
-  } while (page <= lastPage);
-  return results;
+  return fetchAll<DidongWaiting>("/external/waitings", {
+    center_type: centerCode,
+    started_at: startedAt,
+    finished_at: finishedAt,
+  });
 }
