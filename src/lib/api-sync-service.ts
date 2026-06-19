@@ -289,7 +289,7 @@ export async function syncCenter(
     const batch = await prisma.uploadBatch.create({
       data: {
         originalFilename: `api_sync_${centerName}_${fromDate}_${toDate}`,
-        fileHash: `api_${centerCode}_${fromDate}_${toDate}`,
+        fileHash: `api_${centerCode}_${fromDate}_${toDate}_${Date.now()}`,
         uploadedById: userId,
         sourceType: "api_sync",
         targetMonth: fromDate.slice(0, 7),
