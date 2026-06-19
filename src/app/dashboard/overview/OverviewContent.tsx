@@ -159,23 +159,14 @@ export default async function OverviewContent({
       ? parseInt(Object.entries(hourTotals).sort((a, b) => b[1] - a[1])[0][0])
       : null;
 
-  // 실제 데이터 날짜 범위 (DB 기준)
-  const dateRange = await prisma.cleanVisitLog.aggregate({
-    where: {
-      year,
-      ...(month ? { month } : {}),
-      ...(centerScope ? { center: centerScope } : {}),
-    },
-    _min: { visitDate: true },
-    _max: { visitDate: true },
-  });
-  const minDate = dateRange._min.visitDate;
-  const maxDate = dateRange._max.visitDate;
-  const periodLabel = minDate && maxDate
-    ? `${minDate.toISOString().slice(0, 10)} ~ ${maxDate.toISOString().slice(0, 10)}`
-    : month
-    ? `${year}년 ${month}월`
-    : `${year}년 전체`;
+  // 실제 데이터 날짜 범위 (daily 데이터 첫/마지막 날짜 기준)
+  const dailyDates = [...new Set(daily.map((d) => d.date.toISOString().slice(0, 10)))].sort();
+  const periodLabel =
+    dailyDates.length > 0
+      ? `${dailyDates[0]} ~ ${dailyDates[dailyDates.length - 1]}`
+      : month
+      ? `${year}년 ${month}월`
+      : `${year}년 전체`;
 
   const insights = generateOverviewInsights({
     totalVisits: current.totalVisits,

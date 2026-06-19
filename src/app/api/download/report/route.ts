@@ -14,16 +14,27 @@ export async function GET(request: NextRequest) {
   const month = searchParams.get("month") ? parseInt(searchParams.get("month")!) : null;
   const centerFilter = searchParams.get("center") ?? "ALL";
   const centerScope =
-    session.centerScope !== "ALL" ? session.centerScope : centerFilter !== "ALL" ? centerFilter : null;
+    session.centerScope !== "ALL"
+      ? session.centerScope
+      : centerFilter !== "ALL"
+      ? centerFilter
+      : null;
+
+  const periodLabel = month ? `${year}년 ${month}월` : `${year}년 전체`;
+  const centerLabel = centerScope ?? "전체 센터";
 
   const dateRange = {
     gte: new Date(year, month ? month - 1 : 0, 1),
     lt: month ? new Date(year, month, 1) : new Date(year + 1, 0, 1),
   };
 
-  const [monthly, daily, programs, surveys, waitings, qualityLogs, actualRange] = await Promise.all([
+  const [monthly, daily, programs, surveys, qualityLogs] = await Promise.all([
     prisma.monthlyCenterSummary.findMany({
-      where: { year, ...(month ? { month } : {}), ...(centerScope ? { center: centerScope } : {}) },
+      where: {
+        year,
+        ...(month ? { month } : {}),
+        ...(centerScope ? { center: centerScope } : {}),
+      },
       orderBy: [{ center: "asc" }, { month: "asc" }],
     }),
     prisma.dailyCenterSummary.findMany({
@@ -38,96 +49,92 @@ export async function GET(request: NextRequest) {
       where: { responseDate: dateRange, ...(centerScope ? { center: centerScope } : {}) },
       select: {
         center: true, responseDate: true, gender: true, ageGroup: true,
-        howFound: true, visitCount: true, participatedPrograms: true,
+        howFound: true, visitCount: true,
         programSatisfaction: true, operationSatisfaction: true, digitalHelpSatisfaction: true,
-        willReturn: true, residence: true,
+        willReturn: true,
       },
-    }),
-    prisma.educationAttendance.findMany({
-      where: { educationDate: dateRange, ...(centerScope ? { center: centerScope } : {}) },
-      select: { center: true, programName: true, educationDate: true, attendanceStatus: true },
     }),
     prisma.dataQualityLog.groupBy({
       by: ["severity", "issueType"],
       _count: { id: true },
     }),
-    prisma.cleanVisitLog.aggregate({
-      where: { year, ...(month ? { month } : {}), ...(centerScope ? { center: centerScope } : {}) },
-      _min: { visitDate: true },
-      _max: { visitDate: true },
-    }),
   ]);
 
-  const minDate = actualRange._min.visitDate?.toISOString().slice(0, 10) ?? "-";
-  const maxDate = actualRange._max.visitDate?.toISOString().slice(0, 10) ?? "-";
-  const actualPeriod = `${minDate} ~ ${maxDate}`;
-  const filterPeriod = month ? `${year}년 ${month}월` : `${year}년 전체`;
-  const centerLabel = centerScope ?? "전체 센터";
+  // 실제 데이터 기간: daily 데이터 첫/마지막 날짜에서 추출
+  const uniqueDates = [...new Set(daily.map((d) => d.date.toISOString().slice(0, 10)))].sort();
+  const actualFrom = uniqueDates[0] ?? "-";
+  const actualTo = uniqueDates[uniqueDates.length - 1] ?? "-";
+  const actualPeriod = actualFrom !== "-" ? `${actualFrom} ~ ${actualTo}` : periodLabel;
 
-  const wb = XLSX.utils.book_new();
-
-  // ── Sheet 1: 종합 요약
+  // KPI 집계
   const totalVisits = monthly.reduce((s, r) => s + r.visitCount, 0);
   const totalUnique = monthly.reduce((s, r) => s + r.uniqueVisitorCount, 0);
   const totalEdu = monthly.reduce((s, r) => s + r.educationAttendanceCount, 0);
   const totalLongStay = monthly.reduce((s, r) => s + r.longStayCount, 0);
   const validStay = monthly.filter((r) => r.avgStayMinutes);
-  const avgStay = validStay.length > 0
-    ? validStay.reduce((s, r) => s + (r.avgStayMinutes ?? 0), 0) / validStay.length : null;
+  const avgStay =
+    validStay.length > 0
+      ? validStay.reduce((s, r) => s + (r.avgStayMinutes ?? 0), 0) / validStay.length
+      : null;
 
-  const satisfactionScore = (val: string | null) => {
-    const map: Record<string, number> = { "매우 만족": 5, "만족": 4, "보통": 3, "불만족": 2, "매우 불만족": 1 };
+  const satisfactionScore = (val: string | null): number | null => {
+    const map: Record<string, number> = {
+      "매우 만족": 5, "만족": 4, "보통": 3, "불만족": 2, "매우 불만족": 1,
+    };
     return val ? (map[val] ?? null) : null;
   };
-  const avgScore = (arr: number[]) =>
-    arr.length > 0 ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : null;
-  const pgScores = surveys.map(s => satisfactionScore(s.programSatisfaction)).filter((v): v is number => v !== null);
-  const opScores = surveys.map(s => satisfactionScore(s.operationSatisfaction)).filter((v): v is number => v !== null);
-  const devScores = surveys.map(s => satisfactionScore(s.digitalHelpSatisfaction)).filter((v): v is number => v !== null);
+  const avgScore = (arr: number[]): string =>
+    arr.length > 0 ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : "-";
 
-  const ws1Data = [
+  const pgScores = surveys.map((s) => satisfactionScore(s.programSatisfaction)).filter((v): v is number => v !== null);
+  const opScores = surveys.map((s) => satisfactionScore(s.operationSatisfaction)).filter((v): v is number => v !== null);
+  const devScores = surveys.map((s) => satisfactionScore(s.digitalHelpSatisfaction)).filter((v): v is number => v !== null);
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: 종합 요약
+  const ws1 = XLSX.utils.aoa_to_sheet([
     ["서울디지털동행플라자 통계 데이터"],
     [],
-    ["조회 조건", ""],
-    ["조회 기간 (필터)", filterPeriod],
+    ["조회 기간 (필터)", periodLabel],
     ["실제 데이터 기간", actualPeriod],
     ["센터", centerLabel],
     ["생성일", new Date().toLocaleString("ko-KR")],
     [],
-    ["═══ 방문 핵심 지표 ═══", ""],
+    ["[방문 지표]", ""],
     ["총 방문건수", totalVisits],
     ["고유 방문자 수", totalUnique],
-    ["1인당 평균 방문 횟수", totalUnique > 0 ? +(totalVisits / totalUnique).toFixed(2) : "-"],
-    ["평균 체류시간 (분)", avgStay ? +avgStay.toFixed(1) : "-"],
+    ["1인당 평균 방문 횟수", totalUnique > 0 ? Number((totalVisits / totalUnique).toFixed(2)) : 0],
+    ["평균 체류시간 (분)", avgStay ? Number(avgStay.toFixed(1)) : 0],
     ["장시간 체류 건수 (4시간 이상)", totalLongStay],
     [],
-    ["═══ 교육 지표 ═══", ""],
-    ["교육 참석 건수 (API 동기화)", totalEdu],
-    ["등록된 프로그램 수", new Set(programs.map(p => p.programName)).size],
+    ["[교육 지표]", ""],
+    ["교육 참석 건수", totalEdu],
+    ["프로그램 종류 수", new Set(programs.map((p) => p.programName)).size],
     [],
-    ["═══ 설문 지표 ═══", ""],
+    ["[설문 지표]", ""],
     ["설문 응답 건수", surveys.length],
-    ["프로그램 만족도 평균 (5점)", avgScore(pgScores) ?? "-"],
-    ["운영 만족도 평균 (5점)", avgScore(opScores) ?? "-"],
-    ["디지털 도움 만족도 평균 (5점)", avgScore(devScores) ?? "-"],
-    ["재방문 의향 (예)", surveys.filter(s => s.willReturn?.includes("예")).length],
+    ["프로그램 만족도 평균 (5점)", avgScore(pgScores)],
+    ["운영 만족도 평균 (5점)", avgScore(opScores)],
+    ["디지털기기 도움 만족도 평균 (5점)", avgScore(devScores)],
+    ["재방문 의향 (예)", surveys.filter((s) => s.willReturn?.includes("예")).length],
     [],
-    ["═══ 데이터 품질 ═══", ""],
-    ["심각 오류 건수", qualityLogs.filter(q => q.severity === "critical").reduce((s, q) => s + q._count.id, 0)],
-    ["경고 건수", qualityLogs.filter(q => q.severity === "warning").reduce((s, q) => s + q._count.id, 0)],
-  ];
-  const ws1 = XLSX.utils.aoa_to_sheet(ws1Data);
+    ["[데이터 품질]", ""],
+    ["심각 오류 건수", qualityLogs.filter((q) => q.severity === "critical").reduce((s, q) => s + q._count.id, 0)],
+    ["경고 건수", qualityLogs.filter((q) => q.severity === "warning").reduce((s, q) => s + q._count.id, 0)],
+  ]);
   ws1["!cols"] = [{ wch: 28 }, { wch: 30 }];
   XLSX.utils.book_append_sheet(wb, ws1, "종합요약");
 
-  // ── Sheet 2: 센터별 월별 방문 현황
+  // ── Sheet 2: 센터별 월별 방문
   const ws2 = XLSX.utils.aoa_to_sheet([
-    [`분석 기간: ${actualPeriod}`, "", "", "", "", "", "", ""],
+    [`분석 기간: ${actualPeriod}`],
     ["센터", "연도", "월", "방문건수", "고유방문자", "1인당방문", "평균체류(분)", "장시간체류", "교육참석"],
     ...monthly.map((r) => [
-      r.center, r.year, r.month, r.visitCount, r.uniqueVisitorCount,
-      r.uniqueVisitorCount > 0 ? +(r.visitCount / r.uniqueVisitorCount).toFixed(2) : "",
-      r.avgStayMinutes ? +r.avgStayMinutes.toFixed(1) : "",
+      r.center, r.year, r.month,
+      r.visitCount, r.uniqueVisitorCount,
+      r.uniqueVisitorCount > 0 ? Number((r.visitCount / r.uniqueVisitorCount).toFixed(2)) : 0,
+      r.avgStayMinutes ? Number(r.avgStayMinutes.toFixed(1)) : 0,
       r.longStayCount, r.educationAttendanceCount,
     ]),
   ]);
@@ -136,12 +143,14 @@ export async function GET(request: NextRequest) {
 
   // ── Sheet 3: 일별 방문 추이
   const ws3 = XLSX.utils.aoa_to_sheet([
-    [`분석 기간: ${actualPeriod}`, "", "", ""],
+    [`분석 기간: ${actualPeriod}`],
     ["날짜", "센터", "방문건수", "고유방문자", "평균체류(분)"],
     ...daily.map((d) => [
-      d.date.toISOString().slice(0, 10), d.center,
-      d.visitCount, d.uniqueVisitorCount,
-      d.avgStayMinutes ? +d.avgStayMinutes.toFixed(1) : "",
+      d.date.toISOString().slice(0, 10),
+      d.center,
+      d.visitCount,
+      d.uniqueVisitorCount,
+      d.avgStayMinutes ? Number(d.avgStayMinutes.toFixed(1)) : 0,
     ]),
   ]);
   ws3["!cols"] = [{ wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
@@ -156,7 +165,7 @@ export async function GET(request: NextRequest) {
     if (p.center) programCount[key].centers.add(p.center);
   }
   const ws4 = XLSX.utils.aoa_to_sheet([
-    [`분석 기간: ${actualPeriod}`, "", ""],
+    [`분석 기간: ${actualPeriod}`],
     ["프로그램명", "이용건수", "운영 센터"],
     ...Object.entries(programCount)
       .sort((a, b) => b[1].total - a[1].total)
@@ -165,27 +174,30 @@ export async function GET(request: NextRequest) {
   ws4["!cols"] = [{ wch: 40 }, { wch: 10 }, { wch: 20 }];
   XLSX.utils.book_append_sheet(wb, ws4, "프로그램 이용내역");
 
-  // ── Sheet 5: 설문조사 상세
+  // ── Sheet 5: 설문 분석
   const genderCount: Record<string, number> = {};
   const ageCount: Record<string, number> = {};
   const howFoundCount: Record<string, number> = {};
   const willReturnCount: Record<string, number> = {};
   for (const s of surveys) {
     if (s.gender) genderCount[s.gender] = (genderCount[s.gender] ?? 0) + 1;
-    if (s.ageGroup) { const k = String(s.ageGroup) + "대"; ageCount[k] = (ageCount[k] ?? 0) + 1; }
+    if (s.ageGroup) {
+      const k = String(s.ageGroup) + "대";
+      ageCount[k] = (ageCount[k] ?? 0) + 1;
+    }
     if (s.howFound) howFoundCount[s.howFound] = (howFoundCount[s.howFound] ?? 0) + 1;
     if (s.willReturn) willReturnCount[s.willReturn] = (willReturnCount[s.willReturn] ?? 0) + 1;
   }
-
-  const surveyRows: (string | number)[][] = [
-    [`분석 기간: ${actualPeriod}`, ""],
+  const willReturnYes = surveys.filter((s) => s.willReturn?.includes("예")).length;
+  const ws5 = XLSX.utils.aoa_to_sheet([
+    [`분석 기간: ${actualPeriod}`],
     [],
     ["항목", "값"],
     ["총 응답 건수", surveys.length],
-    ["프로그램 만족도 평균 (5점)", avgScore(pgScores) ?? "-"],
-    ["운영 만족도 평균 (5점)", avgScore(opScores) ?? "-"],
-    ["디지털기기 도움 만족도 평균 (5점)", avgScore(devScores) ?? "-"],
-    ["재방문 의향 (예)", surveys.filter(s => s.willReturn?.includes("예")).length],
+    ["프로그램 만족도 평균 (5점)", avgScore(pgScores)],
+    ["운영 만족도 평균 (5점)", avgScore(opScores)],
+    ["디지털기기 도움 만족도 평균 (5점)", avgScore(devScores)],
+    ["재방문 의향 (예)", `${willReturnYes}명 (${surveys.length > 0 ? ((willReturnYes / surveys.length) * 100).toFixed(1) : 0}%)`],
     [],
     ["[성별 분포]", ""],
     ...Object.entries(genderCount).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, v]),
@@ -198,10 +210,9 @@ export async function GET(request: NextRequest) {
     [],
     ["[재방문 의향]", ""],
     ...Object.entries(willReturnCount).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, v]),
-  ];
-  const ws5 = XLSX.utils.aoa_to_sheet(surveyRows);
+  ]);
   ws5["!cols"] = [{ wch: 32 }, { wch: 16 }];
-  XLSX.utils.book_append_sheet(wb, ws5, "설문조사 분석");
+  XLSX.utils.book_append_sheet(wb, ws5, "설문 분석");
 
   // ── Sheet 6: 데이터 품질
   const ws6 = XLSX.utils.aoa_to_sheet([
@@ -214,7 +225,7 @@ export async function GET(request: NextRequest) {
   XLSX.utils.book_append_sheet(wb, ws6, "데이터 품질");
 
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  const slug = actualPeriod.replace(/\s*~\s*/, "_");
+  const slug = actualPeriod.replace(/\s*~\s*/, "_").replace(/\s/g, "");
 
   return new Response(buf, {
     headers: {
