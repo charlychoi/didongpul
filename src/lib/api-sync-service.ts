@@ -60,16 +60,19 @@ async function syncVisits(
   const affectedMonths = new Set<string>();
   if (visits.length === 0) return { inserted: 0, skipped: 0, affectedMonths };
 
+  // id가 없는 레코드 제거 (null id → "visit_null" 중복 방지)
+  const validVisits = visits.filter((v) => v.id != null);
+
   // 이미 존재하는 externalId 조회 (배치 단위 스킵)
-  const extIds = visits.map((v) => `visit_${v.id}`);
+  const extIds = validVisits.map((v) => `visit_${v.id}`);
   const existingRows = await prisma.rawVisitLog.findMany({
     where: { externalId: { in: extIds } },
     select: { externalId: true },
   });
   const existingSet = new Set(existingRows.map((r) => r.externalId));
 
-  const newVisits = visits.filter((v) => !existingSet.has(`visit_${v.id}`));
-  const skipped = visits.length - newVisits.length;
+  const newVisits = validVisits.filter((v) => !existingSet.has(`visit_${v.id}`));
+  const skipped = validVisits.length - newVisits.length;
 
   if (newVisits.length === 0) return { inserted: 0, skipped, affectedMonths };
 
@@ -96,7 +99,19 @@ async function syncVisits(
       };
     });
 
-    await prisma.rawVisitLog.createMany({ data: rawPayloads });
+    try {
+      await prisma.rawVisitLog.createMany({ data: rawPayloads });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw e;
+      // UNIQUE 충돌 시 1건씩 개별 삽입 (이미 존재하는 것 skip)
+      for (const row of rawPayloads) {
+        await prisma.rawVisitLog.create({ data: row }).catch((err: unknown) => {
+          const m = err instanceof Error ? err.message : String(err);
+          if (!m.includes("UNIQUE") && !m.includes("unique")) throw err;
+        });
+      }
+    }
 
     // raw row ID 조회 후 clean 배치 삽입 (newVisits만 처리하므로 clean 중복 없음)
     const rawRows = await prisma.rawVisitLog.findMany({
