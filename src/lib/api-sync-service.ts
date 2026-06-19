@@ -167,7 +167,18 @@ async function syncVisits(
       );
       const newClean = cleanPayloads.filter((d) => !existingCleanIds.has(d.rawVisitId));
       if (newClean.length > 0) {
-        await prisma.cleanVisitLog.createMany({ data: newClean });
+        try {
+          await prisma.cleanVisitLog.createMany({ data: newClean });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw e;
+          for (const row of newClean) {
+            await prisma.cleanVisitLog.create({ data: row }).catch((err: unknown) => {
+              const m = err instanceof Error ? err.message : String(err);
+              if (!m.includes("UNIQUE") && !m.includes("unique")) throw err;
+            });
+          }
+        }
         inserted += newClean.length;
       }
     }
@@ -195,8 +206,7 @@ async function syncSurveys(
   const skipped = surveys.length - newItems.length;
   if (newItems.length === 0) return { inserted: 0, skipped };
 
-  await prisma.surveyResponse.createMany({
-    data: newItems.map((item) => {
+  const surveyPayloads = newItems.map((item) => {
       const centerName = CENTER_CODE_TO_NAME[item.center_type] ?? item.format_center_type;
       const responseDate = parseDateTime(item.created_at);
       const user = item.user;
@@ -225,8 +235,19 @@ async function syncSurveys(
         month: responseDate ? responseDate.getMonth() + 1 : null,
         rawJson: JSON.stringify(item),
       };
-    }),
   });
+  try {
+    await prisma.surveyResponse.createMany({ data: surveyPayloads });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw e;
+    for (const row of surveyPayloads) {
+      await prisma.surveyResponse.create({ data: row }).catch((err: unknown) => {
+        const m = err instanceof Error ? err.message : String(err);
+        if (!m.includes("UNIQUE") && !m.includes("unique")) throw err;
+      });
+    }
+  }
 
   return { inserted: newItems.length, skipped };
 }
@@ -251,8 +272,7 @@ async function syncWaitings(
   const skipped = waitings.length - newItems.length;
   if (newItems.length === 0) return { inserted: 0, skipped };
 
-  await prisma.educationAttendance.createMany({
-    data: newItems.map((item) => {
+  const waitingPayloads = newItems.map((item) => {
       const centerName =
         CENTER_CODE_TO_NAME[item.program!.center_type] ?? item.program!.format_center_type;
       const eduDate = parseDateTime(item.finished_at);
@@ -273,8 +293,19 @@ async function syncWaitings(
         month: eduDate ? eduDate.getMonth() + 1 : null,
         rawJson: JSON.stringify(item),
       };
-    }),
   });
+  try {
+    await prisma.educationAttendance.createMany({ data: waitingPayloads });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw e;
+    for (const row of waitingPayloads) {
+      await prisma.educationAttendance.create({ data: row }).catch((err: unknown) => {
+        const m = err instanceof Error ? err.message : String(err);
+        if (!m.includes("UNIQUE") && !m.includes("unique")) throw err;
+      });
+    }
+  }
 
   return { inserted: newItems.length, skipped };
 }
