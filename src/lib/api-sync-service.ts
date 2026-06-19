@@ -19,7 +19,9 @@ const CENTER_CODE_TO_NAME: Record<string, string> = {
   "3": "도봉센터",
   "4": "동대문센터",
 };
-const STALE_PROCESSING_MINUTES = 10;
+const STALE_PROCESSING_MINUTES = 3;
+const INCOMPLETE_API_SYNC_MESSAGE =
+  "API 동기화 저장이 완료되지 않았습니다. 다시 동기화해 주세요.";
 
 // API 시스템 사용자 (batch의 uploadedById로 사용)
 async function getOrCreateApiUser(): Promise<string> {
@@ -360,8 +362,8 @@ export async function syncCenter(
 
     const userId = await getOrCreateApiUser();
 
-    // 외부 API fetch가 끝난 뒤에만 배치를 만든다.
-    // fetch 중 서버리스 요청이 끊겨도 업로드 이력에 processing 배치가 남지 않는다.
+    // API sync는 서버리스 실행이 중간에 끊길 수 있으므로 processing 상태로 만들지 않는다.
+    // 저장이 끝난 경우에만 completed로 바뀌고, 중간에 끊기면 failed 상태로 남는다.
     const batch = await prisma.uploadBatch.create({
       data: {
         originalFilename: `api_sync_${centerName}_${fromDate}_${toDate}`,
@@ -369,7 +371,8 @@ export async function syncCenter(
         uploadedById: userId,
         sourceType: "api_sync",
         targetMonth: fromDate.slice(0, 7),
-        status: "processing",
+        status: "failed",
+        errorMessage: INCOMPLETE_API_SYNC_MESSAGE,
       },
     });
     batchId = batch.id;

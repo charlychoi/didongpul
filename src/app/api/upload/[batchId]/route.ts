@@ -24,6 +24,17 @@ export async function DELETE(
       { status: 409 }
     );
   }
+  const mayStillBeSaving =
+    batch.sourceType === "api_sync" &&
+    batch.status === "failed" &&
+    batch.errorMessage === "API 동기화 저장이 완료되지 않았습니다. 다시 동기화해 주세요." &&
+    Date.now() - batch.uploadedAt.getTime() < 5 * 60 * 1000;
+  if (mayStillBeSaving) {
+    return Response.json(
+      { error: "API 동기화 저장 중일 수 있어 잠시 후 삭제할 수 있습니다." },
+      { status: 409 }
+    );
+  }
 
   // 이 배치의 raw_visit_logs → 영향받는 연월 파악
   const affectedMonths = await prisma.rawVisitLog.findMany({
