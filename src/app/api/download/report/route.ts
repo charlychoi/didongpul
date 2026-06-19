@@ -4,6 +4,15 @@ import { getSession } from "@/lib/session";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
+  try {
+    return await _generate(request);
+  } catch (err) {
+    console.error("[report]", err);
+    return Response.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+async function _generate(request: NextRequest) {
   const session = await getSession();
   if (!session.isLoggedIn) {
     return Response.json({ error: "인증이 필요합니다." }, { status: 401 });
