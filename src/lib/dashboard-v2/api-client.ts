@@ -16,6 +16,7 @@ const DEFAULT_BASE_URL = "https://api.didong.kr/api";
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_PAGES = 500;
 const MIN_REQUEST_GAP_MS = 450;
+const DASHBOARD_PAGE_LIMIT = 3;
 
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -30,6 +31,7 @@ export interface DashboardV2SourceOptions {
   coupons?: boolean;
   websiteVisitors?: boolean;
   websiteStats?: boolean;
+  pageLimit?: number;
 }
 
 function getBaseUrl() {
@@ -117,9 +119,10 @@ export async function didongGet<T>(
 export async function fetchAllPages<T>(
   path: string,
   params: Record<string, string | number | undefined>,
-  bypassCache = false
+  bypassCache = false,
+  pageLimit = MAX_PAGES
 ): Promise<ApiCollection<T>> {
-  const cacheKey = `${path}:${JSON.stringify(params)}`;
+  const cacheKey = `${path}:${pageLimit}:${JSON.stringify(params)}`;
   const cached = memoryCache.get(cacheKey);
   if (!bypassCache && cached && cached.expiresAt > Date.now()) {
     return cached.value as ApiCollection<T>;
@@ -137,12 +140,16 @@ export async function fetchAllPages<T>(
     latestMeta = response.meta;
     lastPage = response.meta?.last_page ?? page;
     page += 1;
-  } while (page <= lastPage);
+  } while (page <= lastPage && page <= pageLimit);
+
+  const truncated = page <= lastPage;
 
   const value: ApiCollection<T> = {
     data,
     total: latestMeta?.total ?? data.length,
     meta: latestMeta,
+    truncated,
+    error: truncated ? `${path}: 데이터가 많아 ${pageLimit}페이지까지만 빠르게 조회했습니다.` : undefined,
   };
   memoryCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value });
   return value;
@@ -151,10 +158,11 @@ export async function fetchAllPages<T>(
 async function safeFetch<T>(
   path: string,
   params: Record<string, string | number | undefined>,
-  bypassCache: boolean | undefined
+  bypassCache: boolean | undefined,
+  pageLimit?: number
 ): Promise<ApiCollection<T>> {
   try {
-    return await fetchAllPages<T>(path, params, bypassCache);
+    return await fetchAllPages<T>(path, params, bypassCache, pageLimit);
   } catch (error) {
     return {
       data: [],
@@ -165,7 +173,7 @@ async function safeFetch<T>(
 }
 
 function emptyCollection<T>(): ApiCollection<T> {
-  return { data: [], total: 0 };
+  return { data: [], total: 0, truncated: false };
 }
 
 function selectedCenters(center: V2Query["center"]) {
@@ -176,7 +184,8 @@ function selectedCenters(center: V2Query["center"]) {
 async function fetchByCenter<T>(
   path: string,
   query: V2Query,
-  extra?: Record<string, string | number | undefined>
+  extra?: Record<string, string | number | undefined>,
+  pageLimit = DASHBOARD_PAGE_LIMIT
 ) {
   const chunks = [];
   for (const center of selectedCenters(query.center)) {
@@ -189,15 +198,18 @@ async function fetchByCenter<T>(
           finished_at: query.endDate,
           ...extra,
         },
-        query.bypassCache
+        query.bypassCache,
+        pageLimit
       )
     );
   }
 
+  const errors = chunks.map((chunk) => chunk.error).filter(Boolean);
   return {
     data: chunks.flatMap((chunk) => chunk.data),
     total: chunks.reduce((sum, chunk) => sum + chunk.total, 0),
-    error: chunks.map((chunk) => chunk.error).filter(Boolean).join("\n") || undefined,
+    truncated: chunks.some((chunk) => chunk.truncated),
+    error: errors.join("\n") || undefined,
   } satisfies ApiCollection<T>;
 }
 
@@ -213,33 +225,36 @@ export async function fetchDashboardV2Sources(
     websiteStats: true,
   }
 ) {
+  const pageLimit = options.pageLimit ?? DASHBOARD_PAGE_LIMIT;
   const totals = options.totals
-    ? await fetchByCenter<DidongTotalRow>("/external/total", query)
+    ? await fetchByCenter<DidongTotalRow>("/external/total", query, undefined, pageLimit)
     : emptyCollection<DidongTotalRow>();
   const visits = options.visits
-    ? await fetchByCenter<DidongVisitRow>("/external/visits", query)
+    ? await fetchByCenter<DidongVisitRow>("/external/visits", query, undefined, pageLimit)
     : emptyCollection<DidongVisitRow>();
   const waitings = options.waitings
-    ? await fetchByCenter<DidongWaitingRow>("/external/waitings", query)
+    ? await fetchByCenter<DidongWaitingRow>("/external/waitings", query, undefined, pageLimit)
     : emptyCollection<DidongWaitingRow>();
   const surveys = options.surveys
-    ? await fetchByCenter<DidongSurveyRow>("/external/surveys", query)
+    ? await fetchByCenter<DidongSurveyRow>("/external/surveys", query, undefined, pageLimit)
     : emptyCollection<DidongSurveyRow>();
   const coupons = options.coupons
-    ? await fetchByCenter<DidongCouponRow>("/external/coupons", query)
+    ? await fetchByCenter<DidongCouponRow>("/external/coupons", query, undefined, pageLimit)
     : emptyCollection<DidongCouponRow>();
   const websiteVisitors = options.websiteVisitors
     ? await safeFetch<DidongWebsiteVisitorRow>(
       "/external/websiteVisitors",
       { started_at: query.startDate, finished_at: query.endDate },
-      query.bypassCache
+      query.bypassCache,
+      pageLimit
     )
     : emptyCollection<DidongWebsiteVisitorRow>();
   const websiteStats = options.websiteStats
     ? await safeFetch<DidongWebsiteStatsRow>(
       "/external/websiteVisitors/stats",
       { started_at: query.startDate, finished_at: query.endDate },
-      query.bypassCache
+      query.bypassCache,
+      pageLimit
     )
     : emptyCollection<DidongWebsiteStatsRow>();
 

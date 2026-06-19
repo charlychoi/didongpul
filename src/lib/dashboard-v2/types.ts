@@ -132,6 +132,7 @@ export interface ApiCollection<T> {
   total: number;
   meta?: PagedResponse<T>["meta"];
   error?: string;
+  truncated?: boolean;
 }
 
 export interface V2SourceBundle {
