@@ -26,48 +26,67 @@ export default function ApiSyncPanel({ lastSyncLogs }: Props) {
   const [lastResult, setLastResult] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() - 30);
+    d.setDate(d.getDate() - 7);
     return d.toISOString().slice(0, 10);
   });
   const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
 
-  // 센터별 순차 동기화 (한 번에 3센터 → 타임아웃 위험. 센터 1개씩 순차 처리)
   const CENTERS = [
     { code: 2, name: "강동센터" },
     { code: 3, name: "도봉센터" },
     { code: 4, name: "동대문센터" },
   ];
 
+  // 날짜 범위를 최대 7일 청크로 분할 (Vercel Hobby 함수 시간 제한 대응)
+  function getDateChunks(from: string, to: string) {
+    const chunks: { from: string; to: string }[] = [];
+    let cursor = new Date(from);
+    const end = new Date(to);
+    while (cursor <= end) {
+      const chunkEnd = new Date(cursor);
+      chunkEnd.setDate(chunkEnd.getDate() + 6); // 7일 창
+      if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+      chunks.push({ from: cursor.toISOString().slice(0, 10), to: chunkEnd.toISOString().slice(0, 10) });
+      cursor = new Date(chunkEnd);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return chunks;
+  }
+
   const handleSync = async () => {
     setSyncing(true);
     setLastResult(null);
     let totalInserted = 0;
-    let errors: string[] = [];
+    const errors: string[] = [];
+    const chunks = getDateChunks(fromDate, toDate);
+
     try {
-      for (const center of CENTERS) {
-        const res = await fetch("/api/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fromDate, toDate, centerCode: center.code }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
-          errors.push(`${center.name}: ${data.error ?? "알 수 없는 오류"}`);
-        } else {
-          const r = data.result;
-          totalInserted += (r?.visits?.inserted ?? 0) + (r?.surveys?.inserted ?? 0) + (r?.waitings?.inserted ?? 0);
+      for (const chunk of chunks) {
+        for (const center of CENTERS) {
+          try {
+            const res = await fetch("/api/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ fromDate: chunk.from, toDate: chunk.to, centerCode: center.code }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.ok) {
+              errors.push(`${center.name} (${chunk.from}~${chunk.to}): ${data?.error ?? res.status}`);
+            } else {
+              const r = data.result;
+              totalInserted += (r?.visits?.inserted ?? 0) + (r?.surveys?.inserted ?? 0) + (r?.waitings?.inserted ?? 0);
+            }
+          } catch {
+            errors.push(`${center.name} (${chunk.from}~${chunk.to}): 네트워크 오류`);
+          }
         }
       }
       if (errors.length === 0) {
         setLastResult(`완료 — ${totalInserted.toLocaleString()}건 추가됨 (${fromDate} ~ ${toDate})`);
-      } else if (errors.length < CENTERS.length) {
-        setLastResult(`부분 완료 — ${totalInserted.toLocaleString()}건 추가 / 오류: ${errors.join(", ")}`);
       } else {
-        setLastResult(`오류: ${errors.join(", ")}`);
+        setLastResult(`완료(${totalInserted.toLocaleString()}건) / 일부 오류: ${errors.slice(0,2).join(", ")}${errors.length > 2 ? "…" : ""}`);
       }
       router.refresh();
-    } catch {
-      setLastResult("네트워크 오류가 발생했습니다.");
     } finally {
       setSyncing(false);
     }
