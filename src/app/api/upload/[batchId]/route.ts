@@ -18,6 +18,12 @@ export async function DELETE(
   if (!batch) {
     return Response.json({ error: "배치를 찾을 수 없습니다." }, { status: 404 });
   }
+  if (batch.status === "processing") {
+    return Response.json(
+      { error: "처리 중인 동기화/업로드는 완료 후 삭제할 수 있습니다." },
+      { status: 409 }
+    );
+  }
 
   // 이 배치의 raw_visit_logs → 영향받는 연월 파악
   const affectedMonths = await prisma.rawVisitLog.findMany({

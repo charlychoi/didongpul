@@ -40,6 +40,22 @@ async function getOrCreateApiUser(): Promise<string> {
   return user.id;
 }
 
+async function updateBatchStatusSafely(
+  batchId: string,
+  data: {
+    status: string;
+    rowCountTotal?: number;
+    duplicateCount?: number;
+    errorMessage?: string | null;
+  }
+) {
+  const result = await prisma.uploadBatch.updateMany({
+    where: { id: batchId },
+    data,
+  });
+  return result.count > 0;
+}
+
 function toDateString(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -374,13 +390,11 @@ export async function syncCenter(
     // 배치 완료 처리
     const totalInserted = visitsResult.inserted + surveysResult.inserted + waitingsResult.inserted;
     const totalSkipped = visitsResult.skipped + surveysResult.skipped + waitingsResult.skipped;
-    await prisma.uploadBatch.update({
-      where: { id: batch.id },
-      data: {
-        status: "completed",
-        rowCountTotal: totalInserted,
-        duplicateCount: totalSkipped,
-      },
+    await updateBatchStatusSafely(batch.id, {
+      status: "completed",
+      rowCountTotal: totalInserted,
+      duplicateCount: totalSkipped,
+      errorMessage: null,
     });
 
     // sync log 기록
@@ -407,9 +421,9 @@ export async function syncCenter(
     const message = err instanceof Error ? err.message : String(err);
     // 배치가 생성된 경우 failed로 업데이트 (처리중 stuck 방지)
     if (batchId) {
-      await prisma.uploadBatch.update({
-        where: { id: batchId },
-        data: { status: "failed", errorMessage: message },
+      await updateBatchStatusSafely(batchId, {
+        status: "failed",
+        errorMessage: message,
       }).catch(() => {});
     }
     await prisma.apiSyncLog.create({
