@@ -58,44 +58,33 @@ async function syncVisits(
   visits: DidongVisit[]
 ): Promise<{ inserted: number; skipped: number; affectedMonths: Set<string> }> {
   const affectedMonths = new Set<string>();
+  if (visits.length === 0) return { inserted: 0, skipped: 0, affectedMonths };
+
+  // 이미 존재하는 externalId 조회 (배치 단위 스킵)
+  const extIds = visits.map((v) => `visit_${v.id}`);
+  const existingRows = await prisma.rawVisitLog.findMany({
+    where: { externalId: { in: extIds } },
+    select: { externalId: true },
+  });
+  const existingSet = new Set(existingRows.map((r) => r.externalId));
+
+  const newVisits = visits.filter((v) => !existingSet.has(`visit_${v.id}`));
+  const skipped = visits.length - newVisits.length;
+
+  if (newVisits.length === 0) return { inserted: 0, skipped, affectedMonths };
+
+  // raw 배치 삽입 (최대 200건씩)
+  const CHUNK = 200;
   let inserted = 0;
-  let skipped = 0;
+  for (let i = 0; i < newVisits.length; i += CHUNK) {
+    const chunk = newVisits.slice(i, i + CHUNK);
 
-  for (const item of visits) {
-    const extId = `visit_${item.id}`;
-
-    // 이미 존재하면 스킵 (idempotent)
-    const existing = await prisma.rawVisitLog.findUnique({
-      where: { externalId: extId },
-    });
-    if (existing) { skipped++; continue; }
-
-    const centerName = CENTER_CODE_TO_NAME[item.center_type] ?? item.format_center_type;
-    const entryDt = parseDateTime(item.entered_at);
-    const exitDt = parseDateTime(item.leaved_at);
-    const visitDate = entryDt ?? new Date();
-    const year = visitDate.getFullYear();
-    const month = visitDate.getMonth() + 1;
-    affectedMonths.add(`${year}-${month}`);
-
-    const user = item.user;
-    const phoneHash = hashPhone(user?.contact);
-    const visitorNameMasked = maskName(user?.name);
-    const visitorKey = makeVisitorKey(user?.name, user?.contact);
-    const entryHour = entryDt ? entryDt.getHours() : null;
-    const exitHour = exitDt ? exitDt.getHours() : null;
-    const stayMinutes =
-      entryDt && exitDt ? (exitDt.getTime() - entryDt.getTime()) / 60000 : null;
-    const stayHours = stayMinutes != null ? stayMinutes / 60 : null;
-    const isLongStay = stayMinutes != null && stayMinutes > 240;
-    const isInvalidStay = stayMinutes != null && (stayMinutes < 0 || stayMinutes > 720);
-    const weekday = entryDt ? entryDt.getDay() : null;
-
-    // raw 레코드 생성
-    const raw = await prisma.rawVisitLog.create({
-      data: {
+    const rawPayloads = chunk.map((item) => {
+      const centerName = CENTER_CODE_TO_NAME[item.center_type] ?? item.format_center_type;
+      const user = item.user;
+      return {
         uploadBatchId: batchId,
-        externalId: extId,
+        externalId: `visit_${item.id}`,
         sheetName: "api_visits",
         rowNumber: item.id,
         centerRaw: centerName,
@@ -104,34 +93,60 @@ async function syncVisits(
         entryDatetimeRaw: item.entered_at,
         exitDatetimeRaw: item.leaved_at || null,
         rawJson: JSON.stringify(item),
-      },
+      };
     });
 
-    // clean 레코드 생성
-    await prisma.cleanVisitLog.create({
-      data: {
-        rawVisitId: raw.id,
-        center: centerName,
-        visitorNameMasked,
-        visitorKey,
-        phoneHash,
-        entryDatetime: entryDt,
-        exitDatetime: exitDt,
-        visitDate,
-        entryHour,
-        exitHour,
-        stayMinutes,
-        stayHours,
-        year,
-        month,
-        weekday,
-        isLongStay,
-        isInvalidStay,
-        isDuplicateSuspected: false,
-      },
-    });
+    await prisma.rawVisitLog.createMany({ data: rawPayloads });
 
-    inserted++;
+    // clean insert: raw row ID 필요하므로 조회 후 upsert
+    const rawRows = await prisma.rawVisitLog.findMany({
+      where: { externalId: { in: chunk.map((v) => `visit_${v.id}`) } },
+      select: { id: true, externalId: true, centerRaw: true, entryDatetimeRaw: true, exitDatetimeRaw: true, nameRaw: true, phoneRaw: true },
+    });
+    const extIdToRaw = new Map(rawRows.map((r) => [r.externalId, r]));
+
+    for (const item of chunk) {
+      const raw = extIdToRaw.get(`visit_${item.id}`);
+      if (!raw) continue;
+
+      const centerName = raw.centerRaw ?? CENTER_CODE_TO_NAME[item.center_type];
+      const entryDt = parseDateTime(item.entered_at);
+      const exitDt = parseDateTime(item.leaved_at);
+      const visitDate = entryDt ?? new Date();
+      const year = visitDate.getFullYear();
+      const month = visitDate.getMonth() + 1;
+      affectedMonths.add(`${year}-${month}`);
+
+      const user = item.user;
+      const stayMinutes = entryDt && exitDt ? (exitDt.getTime() - entryDt.getTime()) / 60000 : null;
+
+      const existingClean = await prisma.cleanVisitLog.findUnique({ where: { rawVisitId: raw.id } });
+      if (!existingClean) {
+        await prisma.cleanVisitLog.create({
+          data: {
+            rawVisitId: raw.id,
+            center: centerName,
+            visitorNameMasked: maskName(user?.name),
+            visitorKey: makeVisitorKey(user?.name, user?.contact),
+            phoneHash: hashPhone(user?.contact),
+            entryDatetime: entryDt,
+            exitDatetime: exitDt,
+            visitDate,
+            entryHour: entryDt ? entryDt.getHours() : null,
+            exitHour: exitDt ? exitDt.getHours() : null,
+            stayMinutes,
+            stayHours: stayMinutes != null ? stayMinutes / 60 : null,
+            year,
+            month,
+            weekday: entryDt ? entryDt.getDay() : null,
+            isLongStay: stayMinutes != null && stayMinutes > 240,
+            isInvalidStay: stayMinutes != null && (stayMinutes < 0 || stayMinutes > 720),
+            isDuplicateSuspected: false,
+          },
+        });
+        inserted++;
+      }
+    }
   }
 
   return { inserted, skipped, affectedMonths };
@@ -144,35 +159,32 @@ async function syncSurveys(
   batchId: string,
   surveys: DidongSurvey[]
 ): Promise<{ inserted: number; skipped: number }> {
-  let inserted = 0;
-  let skipped = 0;
+  if (surveys.length === 0) return { inserted: 0, skipped: 0 };
 
-  for (const item of surveys) {
-    const extId = `survey_${item.id}`;
-    const existing = await prisma.surveyResponse.findUnique({
-      where: { externalId: extId },
-    });
-    if (existing) { skipped++; continue; }
+  const extIds = surveys.map((s) => `survey_${s.id}`);
+  const existingSet = new Set(
+    (await prisma.surveyResponse.findMany({ where: { externalId: { in: extIds } }, select: { externalId: true } }))
+      .map((r) => r.externalId)
+  );
 
-    const centerName = CENTER_CODE_TO_NAME[item.center_type] ?? item.format_center_type;
-    const responseDate = parseDateTime(item.created_at);
-    const year = responseDate ? responseDate.getFullYear() : null;
-    const month = responseDate ? responseDate.getMonth() + 1 : null;
-    const user = item.user;
-    const phoneHash = hashPhone(user?.contact);
-    const respondentNameMasked = maskName(user?.name);
-    const respondentKey = makeVisitorKey(user?.name, user?.contact);
+  const newItems = surveys.filter((s) => !existingSet.has(`survey_${s.id}`));
+  const skipped = surveys.length - newItems.length;
+  if (newItems.length === 0) return { inserted: 0, skipped };
 
-    await prisma.surveyResponse.create({
-      data: {
+  await prisma.surveyResponse.createMany({
+    data: newItems.map((item) => {
+      const centerName = CENTER_CODE_TO_NAME[item.center_type] ?? item.format_center_type;
+      const responseDate = parseDateTime(item.created_at);
+      const user = item.user;
+      return {
         uploadBatchId: batchId,
-        externalId: extId,
+        externalId: `survey_${item.id}`,
         sheetName: "api_surveys",
         rowNumber: item.id,
         center: centerName,
-        respondentNameMasked,
-        respondentKey,
-        phoneHash,
+        respondentNameMasked: maskName(user?.name),
+        respondentKey: makeVisitorKey(user?.name, user?.contact),
+        phoneHash: hashPhone(user?.contact),
         gender: item.gender || null,
         ageGroup: item.age ? parseInt(item.age) : null,
         residence: item.location || null,
@@ -185,15 +197,14 @@ async function syncSurveys(
         digitalHelpSatisfaction: String(item.help_it_satisfaction ?? ""),
         willReturn: item.revisit || null,
         responseDate,
-        year,
-        month,
+        year: responseDate ? responseDate.getFullYear() : null,
+        month: responseDate ? responseDate.getMonth() + 1 : null,
         rawJson: JSON.stringify(item),
-      },
-    });
-    inserted++;
-  }
+      };
+    }),
+  });
 
-  return { inserted, skipped };
+  return { inserted: newItems.length, skipped };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,49 +214,45 @@ async function syncWaitings(
   batchId: string,
   waitings: DidongWaiting[]
 ): Promise<{ inserted: number; skipped: number }> {
-  let inserted = 0;
-  let skipped = 0;
+  const withProgram = waitings.filter((w) => w.program);
+  if (withProgram.length === 0) return { inserted: 0, skipped: waitings.length - withProgram.length };
 
-  for (const item of waitings) {
-    if (!item.program) continue;
-    const extId = `waiting_${item.id}`;
-    const existing = await prisma.educationAttendance.findUnique({
-      where: { externalId: extId },
-    });
-    if (existing) { skipped++; continue; }
+  const extIds = withProgram.map((w) => `waiting_${w.id}`);
+  const existingSet = new Set(
+    (await prisma.educationAttendance.findMany({ where: { externalId: { in: extIds } }, select: { externalId: true } }))
+      .map((r) => r.externalId)
+  );
 
-    const centerName =
-      CENTER_CODE_TO_NAME[item.program.center_type] ?? item.program.format_center_type;
-    const eduDate = parseDateTime(item.finished_at);
-    const year = eduDate ? eduDate.getFullYear() : null;
-    const month = eduDate ? eduDate.getMonth() + 1 : null;
-    const user = item.user;
-    const phoneHash = hashPhone(user?.contact);
-    const participantNameMasked = maskName(user?.name);
-    const participantKey = makeVisitorKey(user?.name, user?.contact);
+  const newItems = withProgram.filter((w) => !existingSet.has(`waiting_${w.id}`));
+  const skipped = waitings.length - newItems.length;
+  if (newItems.length === 0) return { inserted: 0, skipped };
 
-    await prisma.educationAttendance.create({
-      data: {
+  await prisma.educationAttendance.createMany({
+    data: newItems.map((item) => {
+      const centerName =
+        CENTER_CODE_TO_NAME[item.program!.center_type] ?? item.program!.format_center_type;
+      const eduDate = parseDateTime(item.finished_at);
+      const user = item.user;
+      return {
         uploadBatchId: batchId,
-        externalId: extId,
+        externalId: `waiting_${item.id}`,
         sheetName: "api_waitings",
         rowNumber: item.id,
         center: centerName,
-        programName: item.program.title,
+        programName: item.program!.title,
         educationDate: eduDate,
-        participantNameMasked,
-        participantKey,
-        phoneHash,
+        participantNameMasked: maskName(user?.name),
+        participantKey: makeVisitorKey(user?.name, user?.contact),
+        phoneHash: hashPhone(user?.contact),
         attendanceStatus: item.format_state,
-        year,
-        month,
+        year: eduDate ? eduDate.getFullYear() : null,
+        month: eduDate ? eduDate.getMonth() + 1 : null,
         rawJson: JSON.stringify(item),
-      },
-    });
-    inserted++;
-  }
+      };
+    }),
+  });
 
-  return { inserted, skipped };
+  return { inserted: newItems.length, skipped };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,12 +288,10 @@ export async function syncCenter(
       },
     });
 
-    // 병렬 fetch
-    const [visits, surveys, waitings] = await Promise.all([
-      fetchAllVisits(centerCode, fromDate, toDate),
-      fetchAllSurveys(centerCode, fromDate, toDate),
-      fetchAllWaitings(centerCode, fromDate, toDate),
-    ]);
+    // 순차 fetch (동시 요청 시 rate limit 발생)
+    const visits = await fetchAllVisits(centerCode, fromDate, toDate);
+    const surveys = await fetchAllSurveys(centerCode, fromDate, toDate);
+    const waitings = await fetchAllWaitings(centerCode, fromDate, toDate);
 
     // 삽입
     const visitsResult = await syncVisits(batch.id, centerCode, visits);
@@ -362,9 +367,10 @@ export async function syncCenter(
 export async function syncAllCenters(fromDate?: string, toDate?: string) {
   const today = new Date();
   const to = toDate ?? toDateString(today);
+  // cron 기본값: 2일 전 (어제+오늘). 수동 sync는 fromDate를 직접 전달
   const from = fromDate ?? (() => {
     const d = new Date(today);
-    d.setDate(d.getDate() - 30);
+    d.setDate(d.getDate() - 2);
     return toDateString(d);
   })();
 
