@@ -112,7 +112,7 @@ async function fetchAll<T>(
     results.push(...resp.data);
     lastPage = resp.meta.last_page;
     page++;
-    if (page <= lastPage) await delay(500); // 페이지 간 500ms 간격
+    if (page <= lastPage) await delay(100); // 페이지 간 100ms 간격 (순차 요청이므로 안전)
   } while (page <= lastPage);
   return results;
 }

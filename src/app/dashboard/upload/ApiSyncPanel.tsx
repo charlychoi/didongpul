@@ -31,27 +31,41 @@ export default function ApiSyncPanel({ lastSyncLogs }: Props) {
   });
   const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
 
+  // 센터별 순차 동기화 (한 번에 3센터 → 타임아웃 위험. 센터 1개씩 순차 처리)
+  const CENTERS = [
+    { code: 2, name: "강동센터" },
+    { code: 3, name: "도봉센터" },
+    { code: 4, name: "동대문센터" },
+  ];
+
   const handleSync = async () => {
     setSyncing(true);
     setLastResult(null);
+    let totalInserted = 0;
+    let errors: string[] = [];
     try {
-      const res = await fetch("/api/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromDate, toDate }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setLastResult(`오류: ${data.error ?? "알 수 없는 오류"}`);
-      } else {
-        const total = data.results?.reduce(
-          (s: number, r: { visits: { inserted: number }; surveys: { inserted: number }; waitings: { inserted: number } }) =>
-            s + r.visits.inserted + r.surveys.inserted + r.waitings.inserted,
-          0
-        ) ?? 0;
-        setLastResult(`완료 — ${total.toLocaleString()}건 추가됨 (${fromDate} ~ ${toDate})`);
-        router.refresh();
+      for (const center of CENTERS) {
+        const res = await fetch("/api/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fromDate, toDate, centerCode: center.code }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          errors.push(`${center.name}: ${data.error ?? "알 수 없는 오류"}`);
+        } else {
+          const r = data.result;
+          totalInserted += (r?.visits?.inserted ?? 0) + (r?.surveys?.inserted ?? 0) + (r?.waitings?.inserted ?? 0);
+        }
       }
+      if (errors.length === 0) {
+        setLastResult(`완료 — ${totalInserted.toLocaleString()}건 추가됨 (${fromDate} ~ ${toDate})`);
+      } else if (errors.length < CENTERS.length) {
+        setLastResult(`부분 완료 — ${totalInserted.toLocaleString()}건 추가 / 오류: ${errors.join(", ")}`);
+      } else {
+        setLastResult(`오류: ${errors.join(", ")}`);
+      }
+      router.refresh();
     } catch {
       setLastResult("네트워크 오류가 발생했습니다.");
     } finally {
