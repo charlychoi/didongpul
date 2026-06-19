@@ -19,10 +19,27 @@ export async function DELETE(
     return Response.json({ error: "배치를 찾을 수 없습니다." }, { status: 404 });
   }
   if (batch.status === "processing") {
-    return Response.json(
-      { error: "처리 중인 동기화/업로드는 완료 후 삭제할 수 있습니다." },
-      { status: 409 }
-    );
+    const hasSavedData = await Promise.all([
+      prisma.rawVisitLog.count({ where: { uploadBatchId: batchId } }),
+      prisma.rawExcelRow.count({ where: { uploadBatchId: batchId } }),
+      prisma.educationAttendance.count({ where: { uploadBatchId: batchId } }),
+      prisma.surveyResponse.count({ where: { uploadBatchId: batchId } }),
+      prisma.dataQualityLog.count({ where: { uploadBatchId: batchId } }),
+    ]).then((counts) => counts.some((count) => count > 0));
+
+    if (!hasSavedData) {
+      await prisma.uploadBatch.delete({ where: { id: batchId } });
+      return Response.json({ ok: true });
+    }
+
+    await prisma.uploadBatch.update({
+      where: { id: batchId },
+      data: {
+        status: "failed",
+        errorMessage: "처리중 상태가 오래 지속되어 사용자가 중단했습니다.",
+      },
+    });
+    return Response.json({ ok: true, cancelled: true });
   }
   const mayStillBeSaving =
     batch.sourceType === "api_sync" &&

@@ -65,12 +65,10 @@ export default function BatchList({ batches }: { batches: Batch[] }) {
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
             <h3 className="text-base font-semibold text-gray-900 mb-2">배치 삭제 확인</h3>
             <p className="text-sm text-gray-600 mb-1">
-              이 배치와 관련된 <span className="font-medium text-red-600">모든 데이터</span>가
-              삭제됩니다.
+              이 배치와 관련된 데이터를 정리합니다.
             </p>
             <p className="text-sm text-gray-500 mb-5">
-              방문 기록, 교육 참석, 설문 데이터가 함께 삭제되며 통계도 재계산됩니다.
-              삭제 후에는 복구할 수 없습니다.
+              처리중 항목은 즉시 중단 처리되고, 완료된 항목은 관련 데이터 삭제 후 통계가 재계산됩니다.
             </p>
             <div className="flex gap-2 justify-end">
               <button
