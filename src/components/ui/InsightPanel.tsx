@@ -25,11 +25,11 @@ export default function InsightPanel({ insights, title = "자동 인사이트", 
   if (!insights.length) return null;
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center gap-2 mb-3">
         <h3 className="text-sm font-medium text-gray-700">{title}</h3>
         {period && (
-          <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded px-2 py-0.5">
-            분석 기간: {period}
+          <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded px-2 py-0.5 whitespace-nowrap">
+            {period}
           </span>
         )}
       </div>
