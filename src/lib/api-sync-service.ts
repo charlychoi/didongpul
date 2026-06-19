@@ -282,6 +282,7 @@ export async function syncCenter(
   toDate: string
 ): Promise<SyncCenterResult> {
   const centerName = CENTER_CODE_TO_NAME[String(centerCode)];
+  let batchId: string | null = null;
   try {
     const userId = await getOrCreateApiUser();
 
@@ -296,6 +297,7 @@ export async function syncCenter(
         status: "processing",
       },
     });
+    batchId = batch.id;
 
     // 순차 fetch (동시 요청 시 rate limit 발생)
     // API 페이지네이션 중복 반환 방어: id 기준 중복 제거
@@ -353,6 +355,13 @@ export async function syncCenter(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // 배치가 생성된 경우 failed로 업데이트 (처리중 stuck 방지)
+    if (batchId) {
+      await prisma.uploadBatch.update({
+        where: { id: batchId },
+        data: { status: "failed" },
+      }).catch(() => {});
+    }
     await prisma.apiSyncLog.create({
       data: {
         center: centerName,
