@@ -6,6 +6,7 @@ interface Insight {
 interface InsightPanelProps {
   insights: Insight[];
   title?: string;
+  period?: string;
 }
 
 const typeStyles = {
@@ -20,11 +21,18 @@ const typeIcons = {
   positive: "✓",
 };
 
-export default function InsightPanel({ insights, title = "자동 인사이트" }: InsightPanelProps) {
+export default function InsightPanel({ insights, title = "자동 인사이트", period }: InsightPanelProps) {
   if (!insights.length) return null;
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4">
-      <h3 className="text-sm font-medium text-gray-700 mb-3">{title}</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium text-gray-700">{title}</h3>
+        {period && (
+          <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded px-2 py-0.5">
+            분석 기간: {period}
+          </span>
+        )}
+      </div>
       <ul className="space-y-2">
         {insights.map((insight, i) => {
           const t = insight.type ?? "info";
