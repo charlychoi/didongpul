@@ -98,18 +98,18 @@ async function syncVisits(
 
     await prisma.rawVisitLog.createMany({ data: rawPayloads });
 
-    // clean insert: raw row ID 필요하므로 조회 후 upsert
+    // raw row ID 조회 후 clean 배치 삽입 (newVisits만 처리하므로 clean 중복 없음)
     const rawRows = await prisma.rawVisitLog.findMany({
       where: { externalId: { in: chunk.map((v) => `visit_${v.id}`) } },
-      select: { id: true, externalId: true, centerRaw: true, entryDatetimeRaw: true, exitDatetimeRaw: true, nameRaw: true, phoneRaw: true },
+      select: { id: true, externalId: true, centerRaw: true },
     });
-    const extIdToRaw = new Map(rawRows.map((r) => [r.externalId, r]));
+    const extIdToRawId = new Map(rawRows.map((r) => [r.externalId, { id: r.id, center: r.centerRaw }]));
 
-    for (const item of chunk) {
-      const raw = extIdToRaw.get(`visit_${item.id}`);
-      if (!raw) continue;
+    const cleanPayloads = chunk.map((item) => {
+      const raw = extIdToRawId.get(`visit_${item.id}`);
+      if (!raw) return null;
 
-      const centerName = raw.centerRaw ?? CENTER_CODE_TO_NAME[item.center_type];
+      const centerName = raw.center ?? CENTER_CODE_TO_NAME[item.center_type];
       const entryDt = parseDateTime(item.entered_at);
       const exitDt = parseDateTime(item.leaved_at);
       const visitDate = entryDt ?? new Date();
@@ -120,32 +120,31 @@ async function syncVisits(
       const user = item.user;
       const stayMinutes = entryDt && exitDt ? (exitDt.getTime() - entryDt.getTime()) / 60000 : null;
 
-      const existingClean = await prisma.cleanVisitLog.findUnique({ where: { rawVisitId: raw.id } });
-      if (!existingClean) {
-        await prisma.cleanVisitLog.create({
-          data: {
-            rawVisitId: raw.id,
-            center: centerName,
-            visitorNameMasked: maskName(user?.name),
-            visitorKey: makeVisitorKey(user?.name, user?.contact),
-            phoneHash: hashPhone(user?.contact),
-            entryDatetime: entryDt,
-            exitDatetime: exitDt,
-            visitDate,
-            entryHour: entryDt ? entryDt.getHours() : null,
-            exitHour: exitDt ? exitDt.getHours() : null,
-            stayMinutes,
-            stayHours: stayMinutes != null ? stayMinutes / 60 : null,
-            year,
-            month,
-            weekday: entryDt ? entryDt.getDay() : null,
-            isLongStay: stayMinutes != null && stayMinutes > 240,
-            isInvalidStay: stayMinutes != null && (stayMinutes < 0 || stayMinutes > 720),
-            isDuplicateSuspected: false,
-          },
-        });
-        inserted++;
-      }
+      return {
+        rawVisitId: raw.id,
+        center: centerName,
+        visitorNameMasked: maskName(user?.name),
+        visitorKey: makeVisitorKey(user?.name, user?.contact),
+        phoneHash: hashPhone(user?.contact),
+        entryDatetime: entryDt,
+        exitDatetime: exitDt,
+        visitDate,
+        entryHour: entryDt ? entryDt.getHours() : null,
+        exitHour: exitDt ? exitDt.getHours() : null,
+        stayMinutes,
+        stayHours: stayMinutes != null ? stayMinutes / 60 : null,
+        year,
+        month,
+        weekday: entryDt ? entryDt.getDay() : null,
+        isLongStay: stayMinutes != null && stayMinutes > 240,
+        isInvalidStay: stayMinutes != null && (stayMinutes < 0 || stayMinutes > 720),
+        isDuplicateSuspected: false,
+      };
+    }).filter((d): d is NonNullable<typeof d> => d !== null);
+
+    if (cleanPayloads.length > 0) {
+      await prisma.cleanVisitLog.createMany({ data: cleanPayloads });
+      inserted += cleanPayloads.length;
     }
   }
 
