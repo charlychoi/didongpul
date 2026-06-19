@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getSession } from "@/lib/session";
 import { buildDashboardV2 } from "./aggregator";
 import { fetchDashboardV2Sources } from "./api-client";
+import { getDashboardV2DatabaseStatus } from "./db";
 import { V2_CENTERS, V2CenterFilter, V2Query } from "./types";
 
 function todayString() {
@@ -35,6 +36,7 @@ export async function getDashboardV2(request: NextRequest) {
   }
 
   const query = parseV2Query(request);
+  getDashboardV2DatabaseStatus();
   const source = await fetchDashboardV2Sources(query);
   return { data: buildDashboardV2(query, source) };
 }

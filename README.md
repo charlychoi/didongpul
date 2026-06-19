@@ -27,9 +27,12 @@ DIDONG_API_BASE_URL=https://api.didong.kr/api
 DIDONG_API_KEY=replace-with-server-side-api-key
 SESSION_SECRET=replace-with-long-random-secret
 DATABASE_URL=file:./dev.db
+V2_DATABASE_URL=file:./dev-v2.db
 ```
 
 `DIDONG_API_KEY`는 서버에서만 사용하며 `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_` 같은 브라우저 공개 prefix를 붙이면 안 됩니다.
+
+`DATABASE_URL`은 v1 운영 DB 전용입니다. v2에서 캐시, 로그, 집계 저장 등 영속 데이터가 필요해질 경우 반드시 `V2_DATABASE_URL`만 사용해야 하며, `DATABASE_URL`과 같은 값을 넣으면 안 됩니다. 현재 v2 대시보드는 DB 저장 없이 외부 API를 서버에서 직접 조회합니다.
 
 ## v2 주요 경로
 

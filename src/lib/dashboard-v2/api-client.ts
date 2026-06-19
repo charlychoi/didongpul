@@ -15,9 +15,12 @@ import {
 const DEFAULT_BASE_URL = "https://api.didong.kr/api";
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_PAGES = 500;
+const MIN_REQUEST_GAP_MS = 450;
 
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
+let lastRequestAt = 0;
+let requestQueue = Promise.resolve();
 
 function getBaseUrl() {
   return (process.env.DIDONG_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
@@ -62,6 +65,18 @@ async function fetchWithTimeout(url: string, init: RequestInit) {
   }
 }
 
+async function waitForRequestSlot() {
+  const run = requestQueue.then(async () => {
+    const elapsed = Date.now() - lastRequestAt;
+    if (elapsed < MIN_REQUEST_GAP_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_GAP_MS - elapsed));
+    }
+    lastRequestAt = Date.now();
+  });
+  requestQueue = run.catch(() => {});
+  await run;
+}
+
 export async function didongGet<T>(
   path: string,
   params: Record<string, string | number | undefined>
@@ -69,14 +84,15 @@ export async function didongGet<T>(
   const qs = toQueryString(params);
   const url = `${getBaseUrl()}${path}${qs ? `?${qs}` : ""}`;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await waitForRequestSlot();
     const response = await fetchWithTimeout(url, {
       headers: { "X-API-KEY": getApiKey(), Accept: "application/json" },
       cache: "no-store",
     });
 
-    if (response.status === 429 && attempt < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)));
+    if (response.status === 429 && attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 3_000 * (attempt + 1)));
       continue;
     }
 
@@ -148,9 +164,10 @@ async function fetchByCenter<T>(
   query: V2Query,
   extra?: Record<string, string | number | undefined>
 ) {
-  const chunks = await Promise.all(
-    selectedCenters(query.center).map((center) =>
-      safeFetch<T>(
+  const chunks = [];
+  for (const center of selectedCenters(query.center)) {
+    chunks.push(
+      await safeFetch<T>(
         path,
         {
           center_type: center.code,
@@ -160,8 +177,8 @@ async function fetchByCenter<T>(
         },
         query.bypassCache
       )
-    )
-  );
+    );
+  }
 
   return {
     data: chunks.flatMap((chunk) => chunk.data),
@@ -171,24 +188,21 @@ async function fetchByCenter<T>(
 }
 
 export async function fetchDashboardV2Sources(query: V2Query) {
-  const [totals, visits, waitings, surveys, coupons, websiteVisitors, websiteStats] =
-    await Promise.all([
-      fetchByCenter<DidongTotalRow>("/external/total", query),
-      fetchByCenter<DidongVisitRow>("/external/visits", query),
-      fetchByCenter<DidongWaitingRow>("/external/waitings", query),
-      fetchByCenter<DidongSurveyRow>("/external/surveys", query),
-      fetchByCenter<DidongCouponRow>("/external/coupons", query),
-      safeFetch<DidongWebsiteVisitorRow>(
-        "/external/websiteVisitors",
-        { started_at: query.startDate, finished_at: query.endDate },
-        query.bypassCache
-      ),
-      safeFetch<DidongWebsiteStatsRow>(
-        "/external/websiteVisitors/stats",
-        { started_at: query.startDate, finished_at: query.endDate },
-        query.bypassCache
-      ),
-    ]);
+  const totals = await fetchByCenter<DidongTotalRow>("/external/total", query);
+  const visits = await fetchByCenter<DidongVisitRow>("/external/visits", query);
+  const waitings = await fetchByCenter<DidongWaitingRow>("/external/waitings", query);
+  const surveys = await fetchByCenter<DidongSurveyRow>("/external/surveys", query);
+  const coupons = await fetchByCenter<DidongCouponRow>("/external/coupons", query);
+  const websiteVisitors = await safeFetch<DidongWebsiteVisitorRow>(
+    "/external/websiteVisitors",
+    { started_at: query.startDate, finished_at: query.endDate },
+    query.bypassCache
+  );
+  const websiteStats = await safeFetch<DidongWebsiteStatsRow>(
+    "/external/websiteVisitors/stats",
+    { started_at: query.startDate, finished_at: query.endDate },
+    query.bypassCache
+  );
 
   return {
     totals,
