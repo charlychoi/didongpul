@@ -61,9 +61,25 @@ model RawExcelRow {
   @@map("raw_excel_rows")
 }
 
+model ApiSyncLog {
+  id             String   @id @default(cuid())
+  center         String
+  syncType       String   @default("visits") @map("sync_type")
+  syncedFrom     String   @map("synced_from")
+  syncedTo       String   @map("synced_to")
+  recordsFetched Int      @default(0) @map("records_fetched")
+  recordsInserted Int     @default(0) @map("records_inserted")
+  status         String   @default("success")
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("api_sync_logs")
+}
+
 model RawVisitLog {
   id               String   @id @default(cuid())
   uploadBatchId    String   @map("upload_batch_id")
+  externalId       String?  @unique @map("external_id")
   sheetName        String   @map("sheet_name")
   rowNumber        Int      @map("row_number")
   centerRaw        String?  @map("center_raw")
@@ -117,6 +133,7 @@ model CleanVisitLog {
 model EducationAttendance {
   id                    String    @id @default(cuid())
   uploadBatchId         String    @map("upload_batch_id")
+  externalId            String?   @unique @map("external_id")
   sheetName             String    @map("sheet_name")
   rowNumber             Int       @map("row_number")
   center                String?
@@ -196,6 +213,7 @@ model MonthlyCenterSummary {
 model SurveyResponse {
   id                      String    @id @default(cuid())
   uploadBatchId           String    @map("upload_batch_id")
+  externalId              String?   @unique @map("external_id")
   sheetName               String    @map("sheet_name")
   rowNumber               Int       @map("row_number")
   center                  String?
