@@ -22,6 +22,16 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 let lastRequestAt = 0;
 let requestQueue = Promise.resolve();
 
+export interface DashboardV2SourceOptions {
+  totals?: boolean;
+  visits?: boolean;
+  waitings?: boolean;
+  surveys?: boolean;
+  coupons?: boolean;
+  websiteVisitors?: boolean;
+  websiteStats?: boolean;
+}
+
 function getBaseUrl() {
   return (process.env.DIDONG_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
 }
@@ -154,6 +164,10 @@ async function safeFetch<T>(
   }
 }
 
+function emptyCollection<T>(): ApiCollection<T> {
+  return { data: [], total: 0 };
+}
+
 function selectedCenters(center: V2Query["center"]) {
   if (center === "ALL") return V2_CENTERS;
   return V2_CENTERS.filter((item) => item.code === center);
@@ -187,22 +201,47 @@ async function fetchByCenter<T>(
   } satisfies ApiCollection<T>;
 }
 
-export async function fetchDashboardV2Sources(query: V2Query) {
-  const totals = await fetchByCenter<DidongTotalRow>("/external/total", query);
-  const visits = await fetchByCenter<DidongVisitRow>("/external/visits", query);
-  const waitings = await fetchByCenter<DidongWaitingRow>("/external/waitings", query);
-  const surveys = await fetchByCenter<DidongSurveyRow>("/external/surveys", query);
-  const coupons = await fetchByCenter<DidongCouponRow>("/external/coupons", query);
-  const websiteVisitors = await safeFetch<DidongWebsiteVisitorRow>(
-    "/external/websiteVisitors",
-    { started_at: query.startDate, finished_at: query.endDate },
-    query.bypassCache
-  );
-  const websiteStats = await safeFetch<DidongWebsiteStatsRow>(
-    "/external/websiteVisitors/stats",
-    { started_at: query.startDate, finished_at: query.endDate },
-    query.bypassCache
-  );
+export async function fetchDashboardV2Sources(
+  query: V2Query,
+  options: DashboardV2SourceOptions = {
+    totals: true,
+    visits: true,
+    waitings: true,
+    surveys: true,
+    coupons: true,
+    websiteVisitors: true,
+    websiteStats: true,
+  }
+) {
+  const totals = options.totals
+    ? await fetchByCenter<DidongTotalRow>("/external/total", query)
+    : emptyCollection<DidongTotalRow>();
+  const visits = options.visits
+    ? await fetchByCenter<DidongVisitRow>("/external/visits", query)
+    : emptyCollection<DidongVisitRow>();
+  const waitings = options.waitings
+    ? await fetchByCenter<DidongWaitingRow>("/external/waitings", query)
+    : emptyCollection<DidongWaitingRow>();
+  const surveys = options.surveys
+    ? await fetchByCenter<DidongSurveyRow>("/external/surveys", query)
+    : emptyCollection<DidongSurveyRow>();
+  const coupons = options.coupons
+    ? await fetchByCenter<DidongCouponRow>("/external/coupons", query)
+    : emptyCollection<DidongCouponRow>();
+  const websiteVisitors = options.websiteVisitors
+    ? await safeFetch<DidongWebsiteVisitorRow>(
+      "/external/websiteVisitors",
+      { started_at: query.startDate, finished_at: query.endDate },
+      query.bypassCache
+    )
+    : emptyCollection<DidongWebsiteVisitorRow>();
+  const websiteStats = options.websiteStats
+    ? await safeFetch<DidongWebsiteStatsRow>(
+      "/external/websiteVisitors/stats",
+      { started_at: query.startDate, finished_at: query.endDate },
+      query.bypassCache
+    )
+    : emptyCollection<DidongWebsiteStatsRow>();
 
   return {
     totals,

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { getSession } from "@/lib/session";
 import { buildDashboardV2 } from "./aggregator";
-import { fetchDashboardV2Sources } from "./api-client";
+import { DashboardV2SourceOptions, fetchDashboardV2Sources } from "./api-client";
 import { getDashboardV2DatabaseStatus } from "./db";
 import { V2_CENTERS, V2CenterFilter, V2Query } from "./types";
 
@@ -29,7 +29,10 @@ export function parseV2Query(request: NextRequest): V2Query {
   };
 }
 
-export async function getDashboardV2(request: NextRequest) {
+export async function getDashboardV2(
+  request: NextRequest,
+  sourceOptions?: DashboardV2SourceOptions
+) {
   const session = await getSession();
   if (!session.isLoggedIn) {
     return { error: Response.json({ error: "인증이 필요합니다." }, { status: 401 }) };
@@ -37,6 +40,6 @@ export async function getDashboardV2(request: NextRequest) {
 
   const query = parseV2Query(request);
   getDashboardV2DatabaseStatus();
-  const source = await fetchDashboardV2Sources(query);
+  const source = await fetchDashboardV2Sources(query, sourceOptions);
   return { data: buildDashboardV2(query, source) };
 }

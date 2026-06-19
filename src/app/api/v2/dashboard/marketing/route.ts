@@ -4,7 +4,12 @@ import { getDashboardV2 } from "@/lib/dashboard-v2/route";
 export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
-  const result = await getDashboardV2(request);
+  const result = await getDashboardV2(request, {
+    visits: true,
+    surveys: true,
+    websiteVisitors: true,
+    websiteStats: true,
+  });
   if (result.error) return result.error;
   return Response.json(
     {
