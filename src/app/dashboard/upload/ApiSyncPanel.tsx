@@ -28,8 +28,8 @@ export default function ApiSyncPanel({ lastSyncLogs }: Props) {
     // 마지막 성공 동기화의 syncedTo 날짜부터 이어서 시작 (데이터 공백 방지)
     const successLogs = lastSyncLogs.filter((l) => l.status === "success");
     if (successLogs.length > 0) {
-      const minSyncedTo = successLogs.map((l) => l.syncedTo).sort()[0];
-      return minSyncedTo; // 마지막 동기화 종료일부터 재시작 (당일 신규 데이터 포함)
+      const latestSyncedTo = successLogs.map((l) => l.syncedTo).sort().at(-1);
+      if (latestSyncedTo) return latestSyncedTo; // 마지막 동기화 종료일부터 재시작 (당일 신규 데이터 포함)
     }
     const d = new Date();
     d.setDate(d.getDate() - 7);

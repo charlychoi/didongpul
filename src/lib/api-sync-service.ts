@@ -331,9 +331,21 @@ export async function syncCenter(
   const centerName = CENTER_CODE_TO_NAME[String(centerCode)];
   let batchId: string | null = null;
   try {
+    // 순차 fetch (동시 요청 시 rate limit 발생)
+    // API 페이지네이션 중복 반환 방어: id 기준 중복 제거
+    const rawVisits = await fetchAllVisits(centerCode, fromDate, toDate);
+    const visits = [...new Map(rawVisits.map((v) => [v.id, v])).values()];
+
+    const rawSurveys = await fetchAllSurveys(centerCode, fromDate, toDate);
+    const surveys = [...new Map(rawSurveys.map((s) => [s.id, s])).values()];
+
+    const rawWaitings = await fetchAllWaitings(centerCode, fromDate, toDate);
+    const waitings = [...new Map(rawWaitings.map((w) => [w.id, w])).values()];
+
     const userId = await getOrCreateApiUser();
 
-    // 배치 생성 (source_type = api_sync)
+    // 외부 API fetch가 끝난 뒤에만 배치를 만든다.
+    // fetch 중 서버리스 요청이 끊겨도 업로드 이력에 processing 배치가 남지 않는다.
     const batch = await prisma.uploadBatch.create({
       data: {
         originalFilename: `api_sync_${centerName}_${fromDate}_${toDate}`,
@@ -345,17 +357,6 @@ export async function syncCenter(
       },
     });
     batchId = batch.id;
-
-    // 순차 fetch (동시 요청 시 rate limit 발생)
-    // API 페이지네이션 중복 반환 방어: id 기준 중복 제거
-    const rawVisits = await fetchAllVisits(centerCode, fromDate, toDate);
-    const visits = [...new Map(rawVisits.map((v) => [v.id, v])).values()];
-
-    const rawSurveys = await fetchAllSurveys(centerCode, fromDate, toDate);
-    const surveys = [...new Map(rawSurveys.map((s) => [s.id, s])).values()];
-
-    const rawWaitings = await fetchAllWaitings(centerCode, fromDate, toDate);
-    const waitings = [...new Map(rawWaitings.map((w) => [w.id, w])).values()];
 
     // 삽입
     const visitsResult = await syncVisits(batch.id, centerCode, visits);
