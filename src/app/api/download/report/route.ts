@@ -4,6 +4,15 @@ import { getSession } from "@/lib/session";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
+  try {
+    return await generateReport(request);
+  } catch (err) {
+    console.error("[download/report] error:", err);
+    return Response.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+async function generateReport(request: NextRequest) {
   const session = await getSession();
   if (!session.isLoggedIn) {
     return Response.json({ error: "인증이 필요합니다." }, { status: 401 });
@@ -224,7 +233,7 @@ export async function GET(request: NextRequest) {
   ws6["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 8 }];
   XLSX.utils.book_append_sheet(wb, ws6, "데이터 품질");
 
-  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  const buf: ArrayBuffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
   const slug = actualPeriod.replace(/\s*~\s*/, "_").replace(/\s/g, "");
 
   return new Response(buf, {
