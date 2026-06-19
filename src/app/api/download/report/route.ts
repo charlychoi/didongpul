@@ -4,15 +4,6 @@ import { getSession } from "@/lib/session";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
-  try {
-    return await generateReport(request);
-  } catch (err) {
-    console.error("[download/report] error:", err);
-    return Response.json({ error: String(err) }, { status: 500 });
-  }
-}
-
-async function generateReport(request: NextRequest) {
   const session = await getSession();
   if (!session.isLoggedIn) {
     return Response.json({ error: "인증이 필요합니다." }, { status: 401 });
@@ -37,43 +28,40 @@ async function generateReport(request: NextRequest) {
     lt: month ? new Date(year, month, 1) : new Date(year + 1, 0, 1),
   };
 
-  const [monthly, daily, programs, surveys, qualityLogs] = await Promise.all([
-    prisma.monthlyCenterSummary.findMany({
-      where: {
-        year,
-        ...(month ? { month } : {}),
-        ...(centerScope ? { center: centerScope } : {}),
-      },
-      orderBy: [{ center: "asc" }, { month: "asc" }],
-    }),
-    prisma.dailyCenterSummary.findMany({
-      where: { date: dateRange, ...(centerScope ? { center: centerScope } : {}) },
-      orderBy: [{ date: "asc" }, { center: "asc" }],
-    }),
-    prisma.educationAttendance.findMany({
-      where: { educationDate: dateRange, ...(centerScope ? { center: centerScope } : {}) },
-      select: { center: true, programName: true, educationDate: true, attendanceStatus: true },
-    }),
-    prisma.surveyResponse.findMany({
-      where: { responseDate: dateRange, ...(centerScope ? { center: centerScope } : {}) },
-      select: {
-        center: true, responseDate: true, gender: true, ageGroup: true,
-        howFound: true, visitCount: true,
-        programSatisfaction: true, operationSatisfaction: true, digitalHelpSatisfaction: true,
-        willReturn: true,
-      },
-    }),
-    prisma.dataQualityLog.groupBy({
-      by: ["severity", "issueType"],
-      _count: { id: true },
-    }),
-  ]);
+  // 순차 쿼리 (원본 방식 유지 — LibSQL 안정성)
+  const monthly = await prisma.monthlyCenterSummary.findMany({
+    where: {
+      year,
+      ...(month ? { month } : {}),
+      ...(centerScope ? { center: centerScope } : {}),
+    },
+    orderBy: [{ center: "asc" }, { month: "asc" }],
+  });
 
-  // 실제 데이터 기간: daily 데이터 첫/마지막 날짜에서 추출
-  const uniqueDates = [...new Set(daily.map((d) => d.date.toISOString().slice(0, 10)))].sort();
-  const actualFrom = uniqueDates[0] ?? "-";
-  const actualTo = uniqueDates[uniqueDates.length - 1] ?? "-";
-  const actualPeriod = actualFrom !== "-" ? `${actualFrom} ~ ${actualTo}` : periodLabel;
+  const programs = await prisma.educationAttendance.findMany({
+    where: {
+      educationDate: dateRange,
+      ...(centerScope ? { center: centerScope } : {}),
+    },
+    select: { center: true, programName: true, educationDate: true },
+  });
+
+  const surveys = await prisma.surveyResponse.findMany({
+    where: {
+      responseDate: dateRange,
+      ...(centerScope ? { center: centerScope } : {}),
+    },
+    select: {
+      center: true, gender: true, ageGroup: true,
+      howFound: true, willReturn: true,
+      programSatisfaction: true, operationSatisfaction: true, digitalHelpSatisfaction: true,
+    },
+  });
+
+  const qualityLogs = await prisma.dataQualityLog.groupBy({
+    by: ["severity", "issueType"],
+    _count: { id: true },
+  });
 
   // KPI 집계
   const totalVisits = monthly.reduce((s, r) => s + r.visitCount, 0);
@@ -92,8 +80,8 @@ async function generateReport(request: NextRequest) {
     };
     return val ? (map[val] ?? null) : null;
   };
-  const avgScore = (arr: number[]): string =>
-    arr.length > 0 ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : "-";
+  const avgScore = (arr: number[]): string | number =>
+    arr.length > 0 ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : "-";
 
   const pgScores = surveys.map((s) => satisfactionScore(s.programSatisfaction)).filter((v): v is number => v !== null);
   const opScores = surveys.map((s) => satisfactionScore(s.operationSatisfaction)).filter((v): v is number => v !== null);
@@ -105,16 +93,15 @@ async function generateReport(request: NextRequest) {
   const ws1 = XLSX.utils.aoa_to_sheet([
     ["서울디지털동행플라자 통계 데이터"],
     [],
-    ["조회 기간 (필터)", periodLabel],
-    ["실제 데이터 기간", actualPeriod],
+    ["조회 기간", periodLabel],
     ["센터", centerLabel],
     ["생성일", new Date().toLocaleString("ko-KR")],
     [],
     ["[방문 지표]", ""],
     ["총 방문건수", totalVisits],
     ["고유 방문자 수", totalUnique],
-    ["1인당 평균 방문 횟수", totalUnique > 0 ? Number((totalVisits / totalUnique).toFixed(2)) : 0],
-    ["평균 체류시간 (분)", avgStay ? Number(avgStay.toFixed(1)) : 0],
+    ["1인당 평균 방문 횟수", totalUnique > 0 ? +(totalVisits / totalUnique).toFixed(2) : 0],
+    ["평균 체류시간 (분)", avgStay ? +avgStay.toFixed(1) : 0],
     ["장시간 체류 건수 (4시간 이상)", totalLongStay],
     [],
     ["[교육 지표]", ""],
@@ -137,35 +124,19 @@ async function generateReport(request: NextRequest) {
 
   // ── Sheet 2: 센터별 월별 방문
   const ws2 = XLSX.utils.aoa_to_sheet([
-    [`분석 기간: ${actualPeriod}`],
     ["센터", "연도", "월", "방문건수", "고유방문자", "1인당방문", "평균체류(분)", "장시간체류", "교육참석"],
     ...monthly.map((r) => [
       r.center, r.year, r.month,
       r.visitCount, r.uniqueVisitorCount,
-      r.uniqueVisitorCount > 0 ? Number((r.visitCount / r.uniqueVisitorCount).toFixed(2)) : 0,
-      r.avgStayMinutes ? Number(r.avgStayMinutes.toFixed(1)) : 0,
+      r.uniqueVisitorCount > 0 ? +(r.visitCount / r.uniqueVisitorCount).toFixed(2) : 0,
+      r.avgStayMinutes ? +r.avgStayMinutes.toFixed(1) : 0,
       r.longStayCount, r.educationAttendanceCount,
     ]),
   ]);
   ws2["!cols"] = [{ wch: 12 }, { wch: 6 }, { wch: 4 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 10 }];
   XLSX.utils.book_append_sheet(wb, ws2, "센터별 월별 방문");
 
-  // ── Sheet 3: 일별 방문 추이
-  const ws3 = XLSX.utils.aoa_to_sheet([
-    [`분석 기간: ${actualPeriod}`],
-    ["날짜", "센터", "방문건수", "고유방문자", "평균체류(분)"],
-    ...daily.map((d) => [
-      d.date.toISOString().slice(0, 10),
-      d.center,
-      d.visitCount,
-      d.uniqueVisitorCount,
-      d.avgStayMinutes ? Number(d.avgStayMinutes.toFixed(1)) : 0,
-    ]),
-  ]);
-  ws3["!cols"] = [{ wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
-  XLSX.utils.book_append_sheet(wb, ws3, "일별 방문 추이");
-
-  // ── Sheet 4: 프로그램 이용내역
+  // ── Sheet 3: 프로그램 이용내역
   const programCount: Record<string, { total: number; centers: Set<string> }> = {};
   for (const p of programs) {
     const key = p.programName ?? "미분류";
@@ -173,17 +144,16 @@ async function generateReport(request: NextRequest) {
     programCount[key].total += 1;
     if (p.center) programCount[key].centers.add(p.center);
   }
-  const ws4 = XLSX.utils.aoa_to_sheet([
-    [`분석 기간: ${actualPeriod}`],
+  const ws3 = XLSX.utils.aoa_to_sheet([
     ["프로그램명", "이용건수", "운영 센터"],
     ...Object.entries(programCount)
       .sort((a, b) => b[1].total - a[1].total)
       .map(([name, v]) => [name, v.total, [...v.centers].join(", ")]),
   ]);
-  ws4["!cols"] = [{ wch: 40 }, { wch: 10 }, { wch: 20 }];
-  XLSX.utils.book_append_sheet(wb, ws4, "프로그램 이용내역");
+  ws3["!cols"] = [{ wch: 40 }, { wch: 10 }, { wch: 20 }];
+  XLSX.utils.book_append_sheet(wb, ws3, "프로그램 이용내역");
 
-  // ── Sheet 5: 설문 분석
+  // ── Sheet 4: 설문 분석
   const genderCount: Record<string, number> = {};
   const ageCount: Record<string, number> = {};
   const howFoundCount: Record<string, number> = {};
@@ -198,9 +168,7 @@ async function generateReport(request: NextRequest) {
     if (s.willReturn) willReturnCount[s.willReturn] = (willReturnCount[s.willReturn] ?? 0) + 1;
   }
   const willReturnYes = surveys.filter((s) => s.willReturn?.includes("예")).length;
-  const ws5 = XLSX.utils.aoa_to_sheet([
-    [`분석 기간: ${actualPeriod}`],
-    [],
+  const ws4 = XLSX.utils.aoa_to_sheet([
     ["항목", "값"],
     ["총 응답 건수", surveys.length],
     ["프로그램 만족도 평균 (5점)", avgScore(pgScores)],
@@ -220,26 +188,25 @@ async function generateReport(request: NextRequest) {
     ["[재방문 의향]", ""],
     ...Object.entries(willReturnCount).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, v]),
   ]);
-  ws5["!cols"] = [{ wch: 32 }, { wch: 16 }];
-  XLSX.utils.book_append_sheet(wb, ws5, "설문 분석");
+  ws4["!cols"] = [{ wch: 32 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(wb, ws4, "설문 분석");
 
-  // ── Sheet 6: 데이터 품질
-  const ws6 = XLSX.utils.aoa_to_sheet([
+  // ── Sheet 5: 데이터 품질
+  const ws5 = XLSX.utils.aoa_to_sheet([
     ["심각도", "이슈 유형", "건수"],
     ...qualityLogs
       .sort((a, b) => b._count.id - a._count.id)
       .map((q) => [q.severity, q.issueType, q._count.id]),
   ]);
-  ws6["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 8 }];
-  XLSX.utils.book_append_sheet(wb, ws6, "데이터 품질");
+  ws5["!cols"] = [{ wch: 10 }, { wch: 28 }, { wch: 8 }];
+  XLSX.utils.book_append_sheet(wb, ws5, "데이터 품질");
 
-  const buf: ArrayBuffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
-  const slug = actualPeriod.replace(/\s*~\s*/, "_").replace(/\s/g, "");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
   return new Response(buf, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="SSW_통계데이터_${slug}.xlsx"`,
+      "Content-Disposition": `attachment; filename="SSW_통계데이터_${year}${month ? `_${String(month).padStart(2, "0")}` : ""}.xlsx"`,
     },
   });
 }
