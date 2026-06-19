@@ -325,11 +325,13 @@ export async function syncCenter(
 
     // 배치 완료 처리
     const totalInserted = visitsResult.inserted + surveysResult.inserted + waitingsResult.inserted;
+    const totalSkipped = visitsResult.skipped + surveysResult.skipped + waitingsResult.skipped;
     await prisma.uploadBatch.update({
       where: { id: batch.id },
       data: {
         status: "completed",
         rowCountTotal: totalInserted,
+        duplicateCount: totalSkipped,
       },
     });
 

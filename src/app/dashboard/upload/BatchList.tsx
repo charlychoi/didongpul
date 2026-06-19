@@ -105,8 +105,8 @@ export default function BatchList({ batches }: { batches: Batch[] }) {
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">업로드 일시</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">업로드자</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">시트 수</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">저장 행</th>
-                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">중복자 수</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">신규 추가</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-gray-500">기존 데이터(skip)</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">상태</th>
                 <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">품질 점검</th>
                 <th className="text-center px-4 py-2.5 text-xs font-medium text-gray-500">관리</th>
