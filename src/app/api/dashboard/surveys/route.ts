@@ -4,6 +4,21 @@ import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/session";
 import { satisfactionToScore } from "@/features/upload/ingestSurveyData";
 
+function mergeCounts<T extends string>(
+  primary: { key: T | null; count: number }[],
+  secondary: { key: T | null; count: number }[],
+  limit?: number
+) {
+  const totals = new Map<T, number>();
+  for (const item of [...primary, ...secondary]) {
+    if (!item.key) continue;
+    totals.set(item.key, (totals.get(item.key) ?? 0) + item.count);
+  }
+  const rows = [...totals.entries()].map(([key, count]) => ({ key, count }));
+  rows.sort((a, b) => b.count - a.count);
+  return typeof limit === "number" ? rows.slice(0, limit) : rows;
+}
+
 export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session.isLoggedIn) {
@@ -18,6 +33,11 @@ export async function GET(request: NextRequest) {
     : centerFilter !== "ALL" ? centerFilter : null;
 
   const where: Prisma.SurveyResponseWhereInput = {
+    year,
+    ...(month ? { month } : {}),
+    ...(centerScope ? { center: centerScope } : {}),
+  };
+  const totalWhere: Prisma.ApiTotalRecordWhereInput = {
     year,
     ...(month ? { month } : {}),
     ...(centerScope ? { center: centerScope } : {}),
@@ -48,6 +68,15 @@ export async function GET(request: NextRequest) {
     by: ["howFound"], where: { ...where, howFound: { not: null } },
     _count: { id: true }, orderBy: { _count: { id: "desc" } }, take: 10,
   });
+  const byTotalWayToCome = await prisma.apiTotalRecord.groupBy({
+    by: ["wayToCome"], where: { ...totalWhere, wayToCome: { not: null } },
+    _count: { id: true }, orderBy: { _count: { id: "desc" } }, take: 10,
+  });
+  const mergedHowFound = mergeCounts(
+    byHowFound.map((r) => ({ key: r.howFound, count: r._count.id })),
+    byTotalWayToCome.map((r) => ({ key: r.wayToCome, count: r._count.id })),
+    10
+  );
 
   // 방문횟수
   const byVisitCount = await prisma.surveyResponse.groupBy({
@@ -90,7 +119,7 @@ export async function GET(request: NextRequest) {
     byCenter: byCenter.map((r) => ({ center: r.center!, count: r._count.id })),
     byGender: byGender.map((r) => ({ gender: r.gender!, count: r._count.id })),
     byAge: byAge.map((r) => ({ age: `${r.ageGroup}대`, count: r._count.id })),
-    byHowFound: byHowFound.map((r) => ({ label: r.howFound!, count: r._count.id })),
+    byHowFound: mergedHowFound.map((r) => ({ label: r.key, count: r.count })),
     byVisitCount: byVisitCount.map((r) => ({ label: r.visitCount!, count: r._count.id })),
     byWillReturn: byWillReturn.map((r) => ({ label: r.willReturn!, count: r._count.id })),
     byFavorite: byFavorite.map((r) => ({ name: r.favoriteProgram!, count: r._count.id })),

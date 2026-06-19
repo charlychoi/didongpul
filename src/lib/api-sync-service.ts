@@ -1,5 +1,6 @@
 "use server";
 
+import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import {
   DIDONG_CENTERS,
@@ -7,9 +8,11 @@ import {
   fetchAllVisits,
   fetchAllSurveys,
   fetchAllWaitings,
+  fetchAllTotals,
   DidongVisit,
   DidongSurvey,
   DidongWaiting,
+  DidongTotal,
 } from "@/lib/didong-api";
 import { hashPhone, maskName, makeVisitorKey } from "@/features/normalization/normalizePhone";
 import { rebuildDailySummary, rebuildMonthlySummary } from "@/features/upload/buildAggregates";
@@ -66,6 +69,23 @@ function parseDateTime(raw: string | undefined | null): Date | null {
   if (!raw || raw.trim() === "") return null;
   const dt = new Date(raw.replace(" ", "T") + ":00");
   return isNaN(dt.getTime()) ? null : dt;
+}
+
+function toInt(raw: string | number | null | undefined): number | null {
+  if (raw == null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function makeTotalExternalId(item: DidongTotal): string {
+  const key = [
+    item.center_type,
+    item.entered_at,
+    item.leaved_at ?? "",
+    item.contact ?? "",
+    item.name ?? "",
+  ].join("|");
+  return `total_${crypto.createHash("sha256").update(key).digest("hex")}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,6 +350,68 @@ async function syncWaitings(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 종합내역(입장 + 설문 통합) 동기화
+// ─────────────────────────────────────────────────────────────────────────────
+async function syncTotals(
+  batchId: string,
+  totals: DidongTotal[]
+): Promise<{ inserted: number; skipped: number }> {
+  if (totals.length === 0) return { inserted: 0, skipped: 0 };
+
+  const extIds = totals.map(makeTotalExternalId);
+  const existingSet = new Set(
+    (await prisma.apiTotalRecord.findMany({
+      where: { externalId: { in: extIds } },
+      select: { externalId: true },
+    })).map((r) => r.externalId)
+  );
+
+  const newItems = totals.filter((item) => !existingSet.has(makeTotalExternalId(item)));
+  const skipped = totals.length - newItems.length;
+  if (newItems.length === 0) return { inserted: 0, skipped };
+
+  const payloads = newItems.map((item, index) => {
+    const centerName = CENTER_CODE_TO_NAME[item.center_type] ?? item.format_center_type;
+    const entryDt = parseDateTime(item.entered_at);
+    const exitDt = parseDateTime(item.leaved_at);
+    return {
+      uploadBatchId: batchId,
+      externalId: makeTotalExternalId(item),
+      rowNumber: index + 1,
+      center: centerName,
+      visitorNameMasked: maskName(item.name),
+      visitorKey: makeVisitorKey(item.name, item.contact),
+      phoneHash: hashPhone(item.contact),
+      gender: item.gender || null,
+      ageGroup: toInt(item.age),
+      residence: item.location || null,
+      entryDatetime: entryDt,
+      exitDatetime: exitDt,
+      visitDate: entryDt,
+      wayToCome: item.way_to_come || null,
+      year: entryDt ? entryDt.getFullYear() : null,
+      month: entryDt ? entryDt.getMonth() + 1 : null,
+      rawJson: JSON.stringify(item),
+    };
+  });
+
+  try {
+    await prisma.apiTotalRecord.createMany({ data: payloads });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw e;
+    for (const row of payloads) {
+      await prisma.apiTotalRecord.create({ data: row }).catch((err: unknown) => {
+        const m = err instanceof Error ? err.message : String(err);
+        if (!m.includes("UNIQUE") && !m.includes("unique")) throw err;
+      });
+    }
+  }
+
+  return { inserted: newItems.length, skipped };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 공개 API: 단일 센터 증분 동기화
 // ─────────────────────────────────────────────────────────────────────────────
 export interface SyncCenterResult {
@@ -337,6 +419,7 @@ export interface SyncCenterResult {
   visits: { inserted: number; skipped: number };
   surveys: { inserted: number; skipped: number };
   waitings: { inserted: number; skipped: number };
+  totals: { inserted: number; skipped: number };
   affectedMonths: string[];
   error?: string;
 }
@@ -360,6 +443,8 @@ export async function syncCenter(
     const rawWaitings = await fetchAllWaitings(centerCode, fromDate, toDate);
     const waitings = [...new Map(rawWaitings.map((w) => [w.id, w])).values()];
 
+    const totals = await fetchAllTotals(centerCode, fromDate, toDate);
+
     const userId = await getOrCreateApiUser();
 
     // API sync는 서버리스 실행이 중간에 끊길 수 있으므로 processing 상태로 만들지 않는다.
@@ -381,6 +466,7 @@ export async function syncCenter(
     const visitsResult = await syncVisits(batch.id, centerCode, visits);
     const surveysResult = await syncSurveys(batch.id, surveys);
     const waitingsResult = await syncWaitings(batch.id, waitings);
+    const totalsResult = await syncTotals(batch.id, totals);
 
     // 영향받은 월 집계 재계산
     const allAffected = new Set([...visitsResult.affectedMonths]);
@@ -391,8 +477,10 @@ export async function syncCenter(
     }
 
     // 배치 완료 처리
-    const totalInserted = visitsResult.inserted + surveysResult.inserted + waitingsResult.inserted;
-    const totalSkipped = visitsResult.skipped + surveysResult.skipped + waitingsResult.skipped;
+    const totalInserted =
+      visitsResult.inserted + surveysResult.inserted + waitingsResult.inserted + totalsResult.inserted;
+    const totalSkipped =
+      visitsResult.skipped + surveysResult.skipped + waitingsResult.skipped + totalsResult.skipped;
     await updateBatchStatusSafely(batch.id, {
       status: "completed",
       rowCountTotal: totalInserted,
@@ -407,7 +495,7 @@ export async function syncCenter(
         syncType: "full",
         syncedFrom: fromDate,
         syncedTo: toDate,
-        recordsFetched: visits.length + surveys.length + waitings.length,
+        recordsFetched: visits.length + surveys.length + waitings.length + totals.length,
         recordsInserted: totalInserted,
         status: "success",
       },
@@ -418,6 +506,7 @@ export async function syncCenter(
       visits: { inserted: visitsResult.inserted, skipped: visitsResult.skipped },
       surveys: { inserted: surveysResult.inserted, skipped: surveysResult.skipped },
       waitings: { inserted: waitingsResult.inserted, skipped: waitingsResult.skipped },
+      totals: { inserted: totalsResult.inserted, skipped: totalsResult.skipped },
       affectedMonths: [...allAffected],
     };
   } catch (err) {
@@ -446,6 +535,7 @@ export async function syncCenter(
       visits: { inserted: 0, skipped: 0 },
       surveys: { inserted: 0, skipped: 0 },
       waitings: { inserted: 0, skipped: 0 },
+      totals: { inserted: 0, skipped: 0 },
       affectedMonths: [],
       error: message,
     };

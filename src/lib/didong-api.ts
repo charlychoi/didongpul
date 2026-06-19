@@ -65,6 +65,19 @@ export interface DidongWaiting {
   created_at: string;
 }
 
+export interface DidongTotal {
+  center_type: string;
+  format_center_type: string;
+  name: string | null;
+  contact: string | null;
+  gender: string | null;
+  age: string | number | null;
+  location: string | null;
+  entered_at: string;
+  leaved_at: string | null;
+  way_to_come: string | null;
+}
+
 interface PagedResponse<T> {
   data: T[];
   meta: { current_page: number; last_page: number; total: number };
@@ -171,6 +184,18 @@ export async function fetchAllWaitings(
   finishedAt: string
 ): Promise<DidongWaiting[]> {
   return fetchAll<DidongWaiting>("/external/waitings", {
+    center_type: centerCode,
+    started_at: startedAt,
+    finished_at: finishedAt,
+  });
+}
+
+export async function fetchAllTotals(
+  centerCode: CenterCode,
+  startedAt: string,
+  finishedAt: string
+): Promise<DidongTotal[]> {
+  return fetchAll<DidongTotal>("/external/total", {
     center_type: centerCode,
     started_at: startedAt,
     finished_at: finishedAt,

@@ -6,6 +6,7 @@ interface CenterStats {
   latestVisit: string | null;
   surveyCount: number;
   educationCount: number;
+  totalCount: number;
 }
 
 interface Props {
@@ -18,8 +19,9 @@ export default function SyncedDataPanel({ stats }: Props) {
       visits: acc.visits + s.visitCount,
       surveys: acc.surveys + s.surveyCount,
       education: acc.education + s.educationCount,
+      totals: acc.totals + s.totalCount,
     }),
-    { visits: 0, surveys: 0, education: 0 as number }
+    { visits: 0, surveys: 0, education: 0, totals: 0 as number }
   );
 
   return (
@@ -53,7 +55,7 @@ export default function SyncedDataPanel({ stats }: Props) {
                   </p>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-1 text-center">
+              <div className="grid grid-cols-4 gap-1 text-center">
                 <div>
                   <p className="text-base font-bold text-indigo-700">{s.visitCount.toLocaleString()}</p>
                   <p className="text-xs text-indigo-400">방문</p>
@@ -66,6 +68,10 @@ export default function SyncedDataPanel({ stats }: Props) {
                   <p className="text-base font-bold text-indigo-700">{s.educationCount.toLocaleString()}</p>
                   <p className="text-xs text-indigo-400">교육</p>
                 </div>
+                <div>
+                  <p className="text-base font-bold text-indigo-700">{s.totalCount.toLocaleString()}</p>
+                  <p className="text-xs text-indigo-400">종합</p>
+                </div>
               </div>
             </div>
           );
@@ -73,7 +79,7 @@ export default function SyncedDataPanel({ stats }: Props) {
       </div>
 
       <div className="mt-4 pt-3 border-t border-gray-100">
-        <div className="grid grid-cols-3 gap-1 text-center">
+        <div className="grid grid-cols-4 gap-1 text-center">
           <div>
             <p className="text-sm font-bold text-gray-800">{total.visits.toLocaleString()}</p>
             <p className="text-xs text-gray-400">총 방문</p>
@@ -86,9 +92,12 @@ export default function SyncedDataPanel({ stats }: Props) {
             <p className="text-sm font-bold text-gray-800">{total.education.toLocaleString()}</p>
             <p className="text-xs text-gray-400">총 교육</p>
           </div>
+          <div>
+            <p className="text-sm font-bold text-gray-800">{total.totals.toLocaleString()}</p>
+            <p className="text-xs text-gray-400">총 종합</p>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-

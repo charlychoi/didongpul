@@ -80,7 +80,11 @@ export default function ApiSyncPanel({ lastSyncLogs }: Props) {
               errors.push(`${center.name} (${chunk.from}~${chunk.to}): ${data?.error ?? res.status}`);
             } else {
               const r = data.result;
-              totalInserted += (r?.visits?.inserted ?? 0) + (r?.surveys?.inserted ?? 0) + (r?.waitings?.inserted ?? 0);
+              totalInserted +=
+                (r?.visits?.inserted ?? 0) +
+                (r?.surveys?.inserted ?? 0) +
+                (r?.waitings?.inserted ?? 0) +
+                (r?.totals?.inserted ?? 0);
             }
           } catch {
             errors.push(`${center.name} (${chunk.from}~${chunk.to}): 네트워크 오류`);

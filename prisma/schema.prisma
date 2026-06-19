@@ -43,6 +43,7 @@ model UploadBatch {
   rawVisitLogs         RawVisitLog[]
   educationAttendances EducationAttendance[]
   surveyResponses      SurveyResponse[]
+  apiTotalRecords      ApiTotalRecord[]
   dataQualityLogs      DataQualityLog[]
 
   @@map("upload_batches")
@@ -240,6 +241,32 @@ model SurveyResponse {
   uploadBatch UploadBatch @relation(fields: [uploadBatchId], references: [id])
 
   @@map("survey_responses")
+}
+
+model ApiTotalRecord {
+  id                   String    @id @default(cuid())
+  uploadBatchId        String    @map("upload_batch_id")
+  externalId           String?   @unique @map("external_id")
+  rowNumber            Int       @map("row_number")
+  center               String?
+  visitorNameMasked    String?   @map("visitor_name_masked")
+  visitorKey           String?   @map("visitor_key")
+  phoneHash            String?   @map("phone_hash")
+  gender               String?
+  ageGroup             Int?      @map("age_group")
+  residence            String?
+  entryDatetime        DateTime? @map("entry_datetime")
+  exitDatetime         DateTime? @map("exit_datetime")
+  visitDate            DateTime? @map("visit_date")
+  wayToCome            String?   @map("way_to_come")
+  year                 Int?
+  month                Int?
+  rawJson              String    @map("raw_json")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  uploadBatch UploadBatch @relation(fields: [uploadBatchId], references: [id])
+
+  @@map("api_total_records")
 }
 
 model DataQualityLog {

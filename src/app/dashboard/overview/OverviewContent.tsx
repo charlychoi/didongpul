@@ -33,7 +33,14 @@ async function fetchPeriodSummary(
       : null;
   const totalLongStay = monthly.reduce((s, r) => s + r.longStayCount, 0);
   const totalEduAttendance = monthly.reduce((s, r) => s + r.educationAttendanceCount, 0);
-  return { totalVisits, totalUnique, avgStay, totalLongStay, totalEduAttendance, monthly };
+  const totalRecords = await prisma.apiTotalRecord.count({
+    where: {
+      year,
+      ...(month ? { month } : {}),
+      ...(centerScope ? { center: centerScope } : {}),
+    },
+  });
+  return { totalVisits, totalUnique, avgStay, totalLongStay, totalEduAttendance, totalRecords, monthly };
 }
 
 export default async function OverviewContent({
@@ -232,6 +239,13 @@ export default async function OverviewContent({
           subtitle="출석 확인 기준"
           color="green"
           trend={calcTrend(current.totalEduAttendance, prev.totalEduAttendance, trendLabel)}
+        />
+        <KpiCard
+          title="종합내역"
+          value={current.totalRecords.toLocaleString()}
+          subtitle="3.9 입장+설문 통합 API"
+          color="purple"
+          trend={calcTrend(current.totalRecords, prev.totalRecords, trendLabel)}
         />
         <KpiCard
           title="데이터 품질 점수"

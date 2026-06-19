@@ -24,6 +24,7 @@ export async function DELETE(
       prisma.rawExcelRow.count({ where: { uploadBatchId: batchId } }),
       prisma.educationAttendance.count({ where: { uploadBatchId: batchId } }),
       prisma.surveyResponse.count({ where: { uploadBatchId: batchId } }),
+      prisma.apiTotalRecord.count({ where: { uploadBatchId: batchId } }),
       prisma.dataQualityLog.count({ where: { uploadBatchId: batchId } }),
     ]).then((counts) => counts.some((count) => count > 0));
 
@@ -84,9 +85,11 @@ export async function DELETE(
   await prisma.educationAttendance.deleteMany({ where: { uploadBatchId: batchId } });
   // 5. survey_responses
   await prisma.surveyResponse.deleteMany({ where: { uploadBatchId: batchId } });
-  // 6. data_quality_logs
+  // 6. api_total_records
+  await prisma.apiTotalRecord.deleteMany({ where: { uploadBatchId: batchId } });
+  // 7. data_quality_logs
   await prisma.dataQualityLog.deleteMany({ where: { uploadBatchId: batchId } });
-  // 7. upload_batch
+  // 8. upload_batch
   await prisma.uploadBatch.delete({ where: { id: batchId } });
 
   // 영향받은 연월에 대해 집계 재계산
