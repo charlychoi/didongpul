@@ -143,8 +143,18 @@ async function syncVisits(
     }).filter((d): d is NonNullable<typeof d> => d !== null);
 
     if (cleanPayloads.length > 0) {
-      await prisma.cleanVisitLog.createMany({ data: cleanPayloads });
-      inserted += cleanPayloads.length;
+      // 혹시 이미 존재하는 clean rows 제외 (이중 안전망)
+      const existingCleanIds = new Set(
+        (await prisma.cleanVisitLog.findMany({
+          where: { rawVisitId: { in: cleanPayloads.map((d) => d.rawVisitId) } },
+          select: { rawVisitId: true },
+        })).map((r) => r.rawVisitId)
+      );
+      const newClean = cleanPayloads.filter((d) => !existingCleanIds.has(d.rawVisitId));
+      if (newClean.length > 0) {
+        await prisma.cleanVisitLog.createMany({ data: newClean });
+        inserted += newClean.length;
+      }
     }
   }
 
@@ -288,9 +298,15 @@ export async function syncCenter(
     });
 
     // 순차 fetch (동시 요청 시 rate limit 발생)
-    const visits = await fetchAllVisits(centerCode, fromDate, toDate);
-    const surveys = await fetchAllSurveys(centerCode, fromDate, toDate);
-    const waitings = await fetchAllWaitings(centerCode, fromDate, toDate);
+    // API 페이지네이션 중복 반환 방어: id 기준 중복 제거
+    const rawVisits = await fetchAllVisits(centerCode, fromDate, toDate);
+    const visits = [...new Map(rawVisits.map((v) => [v.id, v])).values()];
+
+    const rawSurveys = await fetchAllSurveys(centerCode, fromDate, toDate);
+    const surveys = [...new Map(rawSurveys.map((s) => [s.id, s])).values()];
+
+    const rawWaitings = await fetchAllWaitings(centerCode, fromDate, toDate);
+    const waitings = [...new Map(rawWaitings.map((w) => [w.id, w])).values()];
 
     // 삽입
     const visitsResult = await syncVisits(batch.id, centerCode, visits);
