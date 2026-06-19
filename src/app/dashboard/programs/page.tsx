@@ -25,7 +25,6 @@ export default function ProgramsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     const params = new URLSearchParams({ year: String(year) });
     if (month) params.set("month", String(month));
     if (center !== "ALL") params.set("center", center);

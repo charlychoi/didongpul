@@ -19,6 +19,7 @@ const CENTER_CODE_TO_NAME: Record<string, string> = {
   "3": "도봉센터",
   "4": "동대문센터",
 };
+const STALE_PROCESSING_MINUTES = 10;
 
 // API 시스템 사용자 (batch의 uploadedById로 사용)
 async function getOrCreateApiUser(): Promise<string> {
@@ -407,7 +408,7 @@ export async function syncCenter(
     if (batchId) {
       await prisma.uploadBatch.update({
         where: { id: batchId },
-        data: { status: "failed" },
+        data: { status: "failed", errorMessage: message },
       }).catch(() => {});
     }
     await prisma.apiSyncLog.create({
@@ -470,4 +471,53 @@ export async function getLastSyncStatus() {
     }
   }
   return Object.values(latestByCenter);
+}
+
+export async function markStaleApiSyncBatchesFailed() {
+  const staleBefore = new Date(Date.now() - STALE_PROCESSING_MINUTES * 60 * 1000);
+  const message =
+    "동기화 작업이 제한 시간 안에 완료되지 않아 실패 처리되었습니다. 다시 동기화해 주세요.";
+
+  const staleBatches = await prisma.uploadBatch.findMany({
+    where: {
+      sourceType: "api_sync",
+      status: "processing",
+      uploadedAt: { lt: staleBefore },
+    },
+    select: {
+      id: true,
+      originalFilename: true,
+      targetMonth: true,
+      uploadedAt: true,
+    },
+  });
+
+  if (staleBatches.length === 0) return 0;
+
+  await prisma.uploadBatch.updateMany({
+    where: { id: { in: staleBatches.map((b) => b.id) } },
+    data: {
+      status: "failed",
+      errorMessage: message,
+    },
+  });
+
+  await prisma.apiSyncLog.createMany({
+    data: staleBatches.map((batch) => {
+      const center = batch.originalFilename.match(/^api_sync_(.+?)_\d{4}-\d{2}-\d{2}/)?.[1] ?? "알 수 없음";
+      const syncedFrom = batch.targetMonth ? `${batch.targetMonth}-01` : toDateString(batch.uploadedAt);
+      return {
+        center,
+        syncType: "full",
+        syncedFrom,
+        syncedTo: toDateString(batch.uploadedAt),
+        recordsFetched: 0,
+        recordsInserted: 0,
+        status: "error",
+        errorMessage: message,
+      };
+    }),
+  });
+
+  return staleBatches.length;
 }

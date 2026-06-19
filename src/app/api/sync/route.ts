@@ -23,6 +23,15 @@ export async function POST(request: NextRequest) {
     const result = centerCode
       ? await syncCenter(centerCode as CenterCode, fromDate ?? thirtyDaysAgo, toDate ?? today)
       : await syncAllCenters(fromDate, toDate);
+    if ("error" in result && result.error) {
+      return Response.json({ ok: false, error: result.error, result }, { status: 500 });
+    }
+    if ("results" in result) {
+      const failed = result.results.find((item) => item.error);
+      if (failed?.error) {
+        return Response.json({ ok: false, error: failed.error, result }, { status: 500 });
+      }
+    }
     return Response.json({ ok: true, result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

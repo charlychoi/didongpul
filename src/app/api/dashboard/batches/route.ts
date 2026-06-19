@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
+import { markStaleApiSyncBatchesFailed } from "@/lib/api-sync-service";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -10,6 +11,8 @@ export async function GET(request: NextRequest) {
 
   const page = parseInt(new URL(request.url).searchParams.get("page") ?? "1");
   const limit = 20;
+
+  await markStaleApiSyncBatchesFailed();
 
   const [batches, total] = await Promise.all([
     prisma.uploadBatch.findMany({

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import * as XLSX from "xlsx";
 import { classifySheet, SheetType } from "./classifySheets";
 
@@ -53,6 +54,5 @@ function getHeaders(worksheet: XLSX.WorkSheet): string[] {
 }
 
 export function computeFileHash(buffer: Buffer): string {
-  const crypto = require("crypto") as typeof import("crypto");
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }

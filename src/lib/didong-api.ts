@@ -71,6 +71,27 @@ interface PagedResponse<T> {
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const REQUEST_TIMEOUT_MS = 25_000;
+const MAX_PAGES_PER_REQUEST = 500;
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`didong API 응답 시간 초과: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function fetchPage<T>(
   path: string,
@@ -83,7 +104,7 @@ async function fetchPage<T>(
 
   // 429 발생 시 최대 3회 재시도 (지수 백오프)
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { "X-API-KEY": API_KEY },
       next: { revalidate: 0 },
     });
@@ -108,6 +129,9 @@ async function fetchAll<T>(
   let page = 1;
   let lastPage = 1;
   do {
+    if (page > MAX_PAGES_PER_REQUEST) {
+      throw new Error(`didong API ${path} 페이지 수가 비정상적으로 많습니다.`);
+    }
     const resp = await fetchPage<T>(path, { ...baseParams, page });
     results.push(...resp.data);
     lastPage = resp.meta.last_page;

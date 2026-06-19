@@ -1,12 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/features/auth/middleware";
-import { getLastSyncStatus } from "@/lib/api-sync-service";
+import { getLastSyncStatus, markStaleApiSyncBatchesFailed } from "@/lib/api-sync-service";
 import UploadForm from "./UploadForm";
 import BatchList from "./BatchList";
 import ApiSyncPanel from "./ApiSyncPanel";
 import SyncedDataPanel from "./SyncedDataPanel";
 
 async function getBatches() {
+  await markStaleApiSyncBatchesFailed();
+
   const batches = await prisma.uploadBatch.findMany({
     include: {
       uploadedBy: { select: { name: true } },
@@ -24,6 +26,7 @@ async function getBatches() {
     detectedSheetsCount: b.detectedSheetsCount,
     rowCountTotal: b.rowCountTotal,
     status: b.status,
+    errorMessage: b.errorMessage,
     dupCount: b._count.dataQualityLogs,
   }));
 }

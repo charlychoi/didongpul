@@ -24,6 +24,7 @@ interface Batch {
   detectedSheetsCount: number;
   rowCountTotal: number;
   status: string;
+  errorMessage: string | null;
   dupCount: number;
 }
 
@@ -137,13 +138,20 @@ export default function BatchList({ batches }: { batches: Batch[] }) {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        STATUS_STYLES[b.status] ?? "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {STATUS_LABELS[b.status] ?? b.status}
-                    </span>
+                    <div className="space-y-1">
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          STATUS_STYLES[b.status] ?? "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {STATUS_LABELS[b.status] ?? b.status}
+                      </span>
+                      {b.status === "failed" && b.errorMessage && (
+                        <p className="max-w-[180px] text-xs text-red-500 line-clamp-2">
+                          {b.errorMessage}
+                        </p>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <Link

@@ -46,7 +46,6 @@ export default function SurveysPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
     const params = new URLSearchParams({ year: String(year) });
     if (month) params.set("month", String(month));
     if (center !== "ALL") params.set("center", center);
@@ -203,7 +202,7 @@ export default function SurveysPage() {
                 <PieChart>
                   <Pie data={data.byWillReturn.map((r) => ({ name: r.label, value: r.count }))}
                     dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70}
-                    label={({ name, percent }) => `${((percent ?? 0) * 100).toFixed(0)}%`}
+                    label={({ percent }) => `${((percent ?? 0) * 100).toFixed(0)}%`}
                     labelLine={false}>
                     {data.byWillReturn.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                   </Pie>
