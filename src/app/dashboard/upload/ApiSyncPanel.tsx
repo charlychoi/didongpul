@@ -109,7 +109,7 @@ export default function ApiSyncPanel({ lastSyncLogs }: Props) {
         </div>
         <div>
           <h3 className="text-sm font-semibold text-gray-900">API 자동 동기화</h3>
-          <p className="text-xs text-gray-500">디동 플랫폼에서 직접 데이터를 가져옵니다 · 매일 새벽 2시 자동 실행</p>
+          <p className="text-xs text-gray-500">디동 플랫폼에서 직접 데이터를 가져옵니다 · 마지막 동기화 이후 날짜 자동 추천</p>
         </div>
       </div>
 
