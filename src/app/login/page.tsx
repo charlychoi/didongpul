@@ -25,7 +25,7 @@ export default function LoginPage() {
             <p className="text-sm text-gray-500 mt-1">관리자 통계 대시보드</p>
           </div>
 
-          <form action={formAction} className="space-y-4">
+          <form action={formAction} className="space-y-4" noValidate>
             {state?.error && (
               <div className="bg-red-50 border border-red-200 rounded-md px-4 py-3 text-sm text-red-700">
                 {state.error}
