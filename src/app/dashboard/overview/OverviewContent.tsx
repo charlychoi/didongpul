@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/features/auth/middleware";
 import KpiCard from "@/components/ui/KpiCard";
 import InsightPanel from "@/components/ui/InsightPanel";
@@ -11,7 +12,7 @@ function calcTrend(current: number, prev: number, label: string) {
   return { pct: ((current - prev) / prev) * 100, label };
 }
 
-async function countApiTotalRecords(where: Parameters<typeof prisma.apiTotalRecord.count>[0]["where"]) {
+async function countApiTotalRecords(where: Prisma.ApiTotalRecordWhereInput) {
   try {
     return await prisma.apiTotalRecord.count({ where });
   } catch (error) {
