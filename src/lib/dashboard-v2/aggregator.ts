@@ -1,9 +1,11 @@
 import { maskContact, maskIp, maskName } from "./privacy";
 import {
   ChartPoint,
+  DidongCouponRow,
   DidongSurveyRow,
   DidongTotalRow,
   DidongVisitRow,
+  DidongWaitingRow,
   V2_CENTERS,
   V2Query,
   V2SourceBundle,
@@ -59,6 +61,14 @@ function ageBucket(value: unknown) {
   if (age < 70) return "60대";
   if (age < 80) return "70대";
   return "80대 이상";
+}
+
+function ageDecadeLabel(value: unknown) {
+  const age = asNumber(value);
+  if (age == null) return "미상";
+  if (age < 20) return "10대 이하";
+  if (age >= 90) return "90대";
+  return `${Math.floor(age / 10) * 10}대`;
 }
 
 function genderLabel(value?: string | null) {
@@ -243,6 +253,12 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   };
   let revisitPositive = 0;
   const programLike = new Map<string, number>();
+  const programSatisfactionValues = new Map<string, number[]>();
+  const surveyGenderDistribution = new Map<string, number>();
+  const surveyAgeDistribution = new Map<string, number>();
+  const surveyVisitCountDistribution = new Map<string, number>();
+  const surveyWillReturnDistribution = new Map<string, number>();
+  const surveyMonthly = new Map<string, number>();
 
   for (const row of surveyRows) {
     const center = centerName(row);
@@ -269,7 +285,19 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     centerSurveys.set(center, centerBucket);
 
     inc(inflowDistribution, row.format_way_to_come || row.way_to_come || "미응답");
+    inc(surveyGenderDistribution, genderLabel(row.user?.gender ?? row.gender));
+    inc(surveyAgeDistribution, ageDecadeLabel(row.user?.age ?? row.age));
+    inc(surveyVisitCountDistribution, String(row.count_visit || "미응답"));
+    inc(surveyWillReturnDistribution, isPositive(row.revisit) ? "재방문 의향 있음" : "기타");
+    inc(surveyMonthly, dateKey((row as { created_at?: string | null }).created_at || row.survey_created_at).slice(0, 7));
     for (const name of splitProgramNames(row.format_most_like || row.most_like)) inc(programLike, name);
+    if (programScore != null) {
+      const programNames = splitProgramNames(row.format_programs || row.programs || row.format_most_like || row.most_like);
+      for (const name of programNames) {
+        if (!programSatisfactionValues.has(name)) programSatisfactionValues.set(name, []);
+        programSatisfactionValues.get(name)!.push(programScore);
+      }
+    }
   }
 
   for (const row of source.totals.data) {
@@ -280,10 +308,17 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   const programCompletions = new Map<string, number>();
   const programWaiting = new Map<string, number>();
   const programOrderValues = new Map<string, number[]>();
+  const programByCenter = new Map<string, number>();
+  const programByMonth = new Map<string, number>();
 
   for (const row of source.waitings.data) {
     const title = row.program?.title?.trim() || "미상";
     inc(programApplications, title);
+    inc(programByCenter, centerName({
+      center_type: row.center_type ?? row.program?.center_type,
+      format_center_type: row.format_center_type ?? row.program?.format_center_type,
+    }));
+    inc(programByMonth, dateKey(row.finished_at || row.created_at).slice(0, 7));
     const state = `${row.format_state || row.state || ""}`;
     if (state.includes("완료") || row.finished_at) inc(programCompletions, title);
     const waiting = asNumber(row.program?.countWaiting) ?? asNumber(row.current) ?? 0;
@@ -319,9 +354,17 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   );
   const convertedUsers = [...linkedWebsiteUsers].filter((userId) => visitUsers.has(userId)).length;
 
-  const couponNotUsed =
-    source.coupons.meta?.counts_not_use ??
-    source.coupons.data.filter((row) => !row.used_at).length;
+  const couponTotal = source.coupons.data.length;
+  const couponGiven = source.coupons.data.filter((row) => row.used_at || row.give_at).length;
+  const couponNotUsed = source.coupons.data.filter((row) => !(row.used_at || row.give_at)).length;
+  const couponByCenterRows = toPoints(source.coupons.data.reduce((map, row) => {
+      inc(map, centerName(row));
+      return map;
+    }, new Map<string, number>()));
+  const couponDaily = source.coupons.data.reduce((map, row) => {
+    inc(map, dateKey(row.give_at || row.used_at || row.created_at));
+    return map;
+  }, new Map<string, number>());
 
   for (const center of V2_CENTERS) {
     const row: Record<string, string | number> = { center: center.name };
@@ -333,9 +376,41 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
 
   const uniqueUsers = userVisitCounts.size;
   const revisitUsers = [...userVisitCounts.values()].filter((count) => count >= 2).length;
-  const totalVisits = visitRows.length;
-  const surveyResponses = surveyRows.length;
+  const shortStayCount = stayValues.filter((value) => value <= 30).length;
+  const longStay2hCount = stayValues.filter((value) => value >= 120).length;
+  const exactCenterVisitTotals = source.visits.centerTotals;
+  const totalVisits = exactCenterVisitTotals
+    ? Object.values(exactCenterVisitTotals).reduce((sum, value) => sum + value, 0)
+    : visitRows.length;
+  const surveyResponses = source.surveys.total || surveyRows.length;
   const satisfactionAverage = avg(surveyScores.total);
+  const programRows = source.waitings.total || source.waitings.data.length;
+  const exactCenterProgramTotals = source.waitings.centerTotals;
+  const programByCenterRows = exactCenterProgramTotals
+    ? V2_CENTERS.map((center) => ({ name: center.name, value: exactCenterProgramTotals[center.name] ?? 0 }))
+    : toPoints(programByCenter);
+  const programApplicationRows = toPoints(programApplications, 20);
+  const topProgram = programApplicationRows[0];
+  const programSatisfactionRows = Array.from(programSatisfactionValues.entries())
+    .map(([name, values]) => ({
+      name,
+      value: Math.round((avg(values) ?? 0) * 100) / 100,
+      responses: values.length,
+      demand: programApplications.get(name) ?? 0,
+    }))
+    .filter((row) => row.responses >= 1)
+    .sort((a, b) => b.value - a.value || b.responses - a.responses)
+    .slice(0, 20);
+  const programOpportunityRows = programSatisfactionRows.map((row) => ({
+    name: row.name,
+    value: row.demand || row.responses,
+    satisfaction: row.value,
+    responses: row.responses,
+  }));
+  const improvementCandidateRows = programOpportunityRows
+    .filter((row) => row.value > 0)
+    .sort((a, b) => (a.satisfaction || 6) - (b.satisfaction || 6) || b.value - a.value)
+    .slice(0, 10);
   const apiErrors = [
     source.totals.error,
     source.visits.error,
@@ -349,7 +424,7 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   const centers = V2_CENTERS.map((center) => {
     const name = center.name;
     const centerSurvey = centerSurveys.get(name);
-    const visits = centerVisits.get(name) ?? 0;
+    const visits = exactCenterVisitTotals?.[name] ?? centerVisits.get(name) ?? 0;
     return {
       center: name,
       visits,
@@ -365,7 +440,9 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     };
   });
 
-  const operationsRows = visitRows.slice(0, 30).map((row) => ({
+  const operationsRows = visitRows
+    .filter((row) => !row.leaved_at || (stayMinutes(row) != null && (stayMinutes(row)! < 0 || stayMinutes(row)! > 480)) || !row.user)
+    .map((row) => ({
     center: centerName(row),
     name: maskName(row.user?.name ?? (row as DidongTotalRow).name),
     contact: maskContact(row.user?.contact ?? (row as DidongTotalRow).contact),
@@ -380,6 +457,43 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     user: row.user_id ? `회원 ${row.user_id}` : "비회원/미상",
     ip: maskIp(row.ip_address),
   }));
+  const rawRows = [
+    ...visitRows.map((row) => ({
+      source: "입퇴장",
+      center: centerName(row),
+      name: maskName(row.user?.name),
+      contact: maskContact(row.user?.contact),
+      date: row.entered_at || "",
+      status: row.leaved_at ? "퇴장 완료" : "미퇴장",
+    })),
+    ...source.waitings.data.map((row: DidongWaitingRow) => ({
+      source: "예약/대기",
+      center: centerName({
+        center_type: row.center_type ?? row.program?.center_type,
+        format_center_type: row.format_center_type ?? row.program?.format_center_type,
+      }),
+      name: maskName(row.user?.name),
+      contact: maskContact(row.user?.contact),
+      date: row.created_at || row.finished_at || "",
+      status: row.format_state || row.state || "미상",
+    })),
+    ...source.surveys.data.map((row) => ({
+      source: "설문",
+      center: centerName(row),
+      name: maskName(row.user?.name ?? row.name),
+      contact: maskContact(row.user?.contact ?? row.contact),
+      date: (row as { created_at?: string | null }).created_at || row.survey_created_at || "",
+      status: "응답",
+    })),
+    ...source.coupons.data.map((row: DidongCouponRow) => ({
+      source: "쿠폰",
+      center: centerName(row),
+      name: maskName(row.user?.name),
+      contact: maskContact(row.user?.contact),
+      date: row.created_at || row.give_at || row.used_at || "",
+      status: row.give_at || row.used_at ? "지급 완료" : "미지급",
+    })),
+  ];
 
   return {
     period: { start: query.startDate, end: query.endDate, previous: previousRange(query) },
@@ -397,11 +511,15 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
       revisitUsers,
       revisitRate: percent(revisitUsers, uniqueUsers),
       avgStayMinutes: Math.round(avg(stayValues) ?? 0),
+      shortStayCount,
+      shortStayRate: percent(shortStayCount, stayValues.length),
+      longStay2hCount,
+      longStay2hRate: percent(longStay2hCount, stayValues.length),
       surveyResponses,
       surveyResponseRate: percent(surveyResponses, totalVisits),
       avgSatisfaction: Math.round((satisfactionAverage ?? 0) * 10) / 10,
       revisitIntentRate: percent(revisitPositive, surveyResponses),
-      programCompletions: [...programCompletions.values()].reduce((sum, value) => sum + value, 0),
+      programCompletions: programRows || [...programCompletions.values()].reduce((sum, value) => sum + value, 0),
       couponNotUsed,
     },
     charts: {
@@ -422,7 +540,7 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
       locationDistribution: toPoints(locationDistribution, 10),
       visitCountDistribution: toPoints(visitCountDistribution),
       inflowDistribution: toPoints(inflowDistribution, 10),
-      programApplications: toPoints(programApplications, 10),
+      programApplications: programApplicationRows,
       programCompletions: toPoints(programCompletions, 10),
       programWaiting: toPoints(programWaiting, 10),
       programAverageOrder: Array.from(programOrderValues.entries()).map(([name, values]) => ({
@@ -430,6 +548,22 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
         value: Math.round(avg(values) ?? 0),
       })).sort((a, b) => b.value - a.value).slice(0, 10),
       programLikes: toPoints(programLike, 10),
+      programByCenter: programByCenterRows,
+      programByMonth: Array.from(programByMonth.entries()).sort().map(([name, value]) => ({ name, value })),
+      programSatisfactionRanking: programSatisfactionRows,
+      programOpportunity: programOpportunityRows,
+      programImprovementCandidates: improvementCandidateRows,
+      couponStatus: [
+        { name: "지급 완료", value: couponGiven },
+        { name: "미지급", value: couponNotUsed },
+      ],
+      couponByCenter: couponByCenterRows,
+      couponDaily: Array.from(couponDaily.entries()).sort().map(([name, value]) => ({ name, value })),
+      surveyGenderDistribution: toPoints(surveyGenderDistribution),
+      surveyAgeDistribution: toPoints(surveyAgeDistribution),
+      surveyVisitCountDistribution: toPoints(surveyVisitCountDistribution),
+      surveyWillReturnDistribution: toPoints(surveyWillReturnDistribution),
+      surveyMonthly: Array.from(surveyMonthly.entries()).sort().map(([name, value]) => ({ name, value })),
       satisfactionBars: [
         { name: "프로그램", value: Math.round((avg(surveyScores.program) ?? 0) * 10) / 10 },
         { name: "운영", value: Math.round((avg(surveyScores.operation) ?? 0) * 10) / 10 },
@@ -450,6 +584,20 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
       centerAgeHeatmap,
     },
     centers,
+    programs: {
+      total: programRows,
+      typeCount: programApplications.size,
+      topName: topProgram?.name || "—",
+      topCount: topProgram?.value || 0,
+    },
+    survey: {
+      total: surveyResponses,
+      satisfaction: {
+        program: Math.round((avg(surveyScores.program) ?? 0) * 100) / 100,
+        operation: Math.round((avg(surveyScores.operation) ?? 0) * 100) / 100,
+        digitalHelp: Math.round((avg(surveyScores.help) ?? 0) * 100) / 100,
+      },
+    },
     marketing: {
       linkedWebsiteUsers: linkedWebsiteUsers.size,
       convertedUsers,
@@ -465,6 +613,22 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
       couponNotUsed,
       apiFailureCount: apiErrors.length,
       rows: operationsRows,
+    },
+    coupons: {
+      total: couponTotal,
+      given: couponGiven,
+      notUsed: couponNotUsed,
+      rows: source.coupons.data.map((row) => ({
+        center: centerName(row),
+        name: maskName(row.user?.name),
+        contact: maskContact(row.user?.contact),
+        createdAt: row.created_at || "",
+        givenAt: row.give_at || row.used_at || "",
+        status: row.give_at || row.used_at ? "지급 완료" : "미지급",
+      })),
+    },
+    rawData: {
+      rows: rawRows,
     },
   };
 }

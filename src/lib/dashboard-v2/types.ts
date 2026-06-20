@@ -63,6 +63,8 @@ export interface DidongVisitRow {
 export interface DidongWaitingRow {
   id?: number | string | null;
   uuid?: string | null;
+  center_type?: string | number | null;
+  format_center_type?: string | null;
   program?: {
     id?: number | string | null;
     center_type?: string | number | null;
@@ -90,7 +92,9 @@ export interface DidongCouponRow {
   format_center_type?: string | null;
   user?: DidongUser | null;
   used_at?: string | null;
+  give_at?: string | null;
   created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface DidongWebsiteVisitorRow {
@@ -130,6 +134,7 @@ export interface PagedResponse<T> {
 export interface ApiCollection<T> {
   data: T[];
   total: number;
+  centerTotals?: Record<string, number>;
   meta?: PagedResponse<T>["meta"];
   error?: string;
   truncated?: boolean;

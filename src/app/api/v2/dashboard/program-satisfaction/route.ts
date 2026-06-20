@@ -4,7 +4,12 @@ import { getDashboardV2 } from "@/lib/dashboard-v2/route";
 export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
-  const result = await getDashboardV2(request, { waitings: true, surveys: true });
+  const result = await getDashboardV2(request, {
+    waitings: true,
+    surveys: true,
+    exactTotals: false,
+    pageLimit: 3,
+  });
   if (result.error) return result.error;
   return Response.json(
     {
@@ -13,14 +18,12 @@ export async function GET(request: NextRequest) {
       sync: result.data.sync,
       kpis: result.data.kpis,
       programs: result.data.programs,
+      survey: result.data.survey,
       charts: {
-        programApplications: result.data.charts.programApplications,
-        programCompletions: result.data.charts.programCompletions,
-        programWaiting: result.data.charts.programWaiting,
-        programAverageOrder: result.data.charts.programAverageOrder,
+        programSatisfactionRanking: result.data.charts.programSatisfactionRanking,
         programLikes: result.data.charts.programLikes,
-        programByCenter: result.data.charts.programByCenter,
-        programByMonth: result.data.charts.programByMonth,
+        programOpportunity: result.data.charts.programOpportunity,
+        programImprovementCandidates: result.data.charts.programImprovementCandidates,
       },
     },
     { headers: { "Cache-Control": "no-store" } }

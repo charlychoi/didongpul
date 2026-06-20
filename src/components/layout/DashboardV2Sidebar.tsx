@@ -7,10 +7,13 @@ import {
   AlertTriangle,
   BarChart3,
   Building2,
-  Globe2,
   HeartPulse,
   MonitorCheck,
   Settings,
+  Sparkles,
+  Table2,
+  Ticket,
+  UserRound,
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -18,12 +21,15 @@ import { cn } from "@/lib/cn";
 const navItems = [
   { href: "/dashboard-v2/overview", label: "운영 종합", icon: Activity },
   { href: "/dashboard-v2/centers", label: "센터 성과", icon: Building2 },
-  { href: "/dashboard-v2/visitors", label: "이용자 분석", icon: Users },
+  { href: "/dashboard-v2/members", label: "회원·재방문", icon: UserRound },
+  { href: "/dashboard-v2/demographics", label: "이용자 특성", icon: Users },
   { href: "/dashboard-v2/programs", label: "프로그램 수요", icon: MonitorCheck },
-  { href: "/dashboard-v2/satisfaction", label: "만족도 인사이트", icon: HeartPulse },
-  { href: "/dashboard-v2/marketing", label: "홍보/웹 전환", icon: Globe2 },
+  { href: "/dashboard-v2/program-satisfaction", label: "프로그램 만족도", icon: Sparkles },
+  { href: "/dashboard-v2/satisfaction", label: "설문 만족도", icon: HeartPulse },
+  { href: "/dashboard-v2/coupons", label: "쿠폰 운영", icon: Ticket },
   { href: "/dashboard-v2/operations", label: "운영 리스크", icon: AlertTriangle },
-  { href: "/dashboard/settings", label: "계정 설정", icon: Settings },
+  { href: "/dashboard-v2/raw-data", label: "원천 데이터", icon: Table2 },
+  { href: "/dashboard-v2/settings", label: "계정 설정", icon: Settings },
 ];
 
 export default function DashboardV2Sidebar() {

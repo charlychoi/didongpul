@@ -12,7 +12,7 @@ export async function requireAuth() {
 export async function requireAdmin() {
   const session = await requireAuth();
   if (session.role !== "super_admin") {
-    redirect("/dashboard");
+    redirect("/dashboard-v2/overview");
   }
   return session;
 }

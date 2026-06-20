@@ -11,16 +11,18 @@ import {
   V2_CENTERS,
   V2Query,
 } from "./types";
+import { getDashboardV2ApiCache, setDashboardV2ApiCache } from "./db";
 
 const DEFAULT_BASE_URL = "https://api.didong.kr/api";
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_PAGES = 500;
-const MIN_REQUEST_GAP_MS = 450;
+const MIN_REQUEST_GAP_MS = 200;
 const DASHBOARD_PAGE_LIMIT = 10;
 const DEFAULT_PER_PAGE = 100;
 
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
-const CACHE_TTL_MS = 30 * 60 * 1000;
+const pendingFetches = new Map<string, Promise<ApiCollection<unknown>>>();
+const CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 let lastRequestAt = 0;
 let requestQueue = Promise.resolve();
 
@@ -33,6 +35,7 @@ export interface DashboardV2SourceOptions {
   websiteVisitors?: boolean;
   websiteStats?: boolean;
   pageLimit?: number;
+  exactTotals?: boolean;
 }
 
 function getBaseUrl() {
@@ -85,9 +88,10 @@ function monthWindows(startDate: string, endDate: string) {
   const windows: Array<{ startDate: string; endDate: string }> = [];
   let cursor = monthStart(startDate);
   while (cursor <= endDate) {
+    const windowEnd = monthEnd(cursor);
     windows.push({
-      startDate: cursor < startDate ? startDate : cursor,
-      endDate: monthEnd(cursor) > endDate ? endDate : monthEnd(cursor),
+      startDate: cursor,
+      endDate: windowEnd,
     });
     cursor = addMonth(cursor);
   }
@@ -98,11 +102,13 @@ function rowDate(row: unknown) {
   const item = row as Record<string, unknown>;
   const value =
     item.entered_at ??
+    item.give_at ??
+    item.used_at ??
     item.created_at ??
     item.visited_at ??
     item.survey_created_at ??
     item.finished_at ??
-    item.used_at ??
+    item.updated_at ??
     item.date;
   if (typeof value !== "string") return null;
   const parsed = parseDate(value);
@@ -114,6 +120,16 @@ function filterRowsByDate<T>(rows: T[], query: V2Query) {
     const date = rowDate(row);
     return !date || (date >= query.startDate && date <= query.endDate);
   });
+}
+
+function responseRows<T>(data: unknown): T[] {
+  if (Array.isArray(data)) return data as T[];
+  if (!data || typeof data !== "object") return [];
+  const item = data as Record<string, unknown>;
+  const rows = [];
+  if (Array.isArray(item.daily)) rows.push(...item.daily);
+  if (Array.isArray(item.by_source)) rows.push(...item.by_source);
+  return rows as T[];
 }
 
 function mergeCollections<T>(collections: ApiCollection<T>[], query: V2Query): ApiCollection<T> {
@@ -130,12 +146,59 @@ function mergeCollections<T>(collections: ApiCollection<T>[], query: V2Query): A
     data.push(row);
   }
   const errors = collections.map((collection) => collection.error).filter(Boolean);
+  const centerTotals = collections.reduce<Record<string, number>>((acc, collection) => {
+    for (const [center, total] of Object.entries(collection.centerTotals || {})) {
+      acc[center] = (acc[center] ?? 0) + total;
+    }
+    return acc;
+  }, {});
   return {
     data,
-    total: collections.reduce((sum, collection) => sum + collection.total, 0),
+    total: data.length,
+    centerTotals: Object.keys(centerTotals).length ? centerTotals : undefined,
     meta: collections.at(-1)?.meta,
     truncated: collections.some((collection) => collection.truncated),
     error: errors.join("\n") || undefined,
+  };
+}
+
+async function fetchExactCenterTotals<T>(
+  path: string,
+  query: V2Query,
+  extra?: Record<string, string | number | undefined>
+) {
+  const totals: Record<string, number> = {};
+  for (const center of selectedCenters(query.center)) {
+    const chunk = await safeFetch<T>(
+      path,
+      {
+        center_type: center.code,
+        started_at: query.startDate,
+        finished_at: query.endDate,
+        ...extra,
+      },
+      query.bypassCache,
+      1
+    );
+    totals[center.name] = chunk.meta?.total ?? chunk.total;
+  }
+  return totals;
+}
+
+function withCenter<T>(
+  collection: ApiCollection<T>,
+  center: (typeof V2_CENTERS)[number]
+): ApiCollection<T> {
+  return {
+    ...collection,
+    data: collection.data.map((row) => {
+      const item = row as Record<string, unknown>;
+      return {
+        ...item,
+        center_type: item.center_type ?? center.code,
+        format_center_type: item.format_center_type ?? center.name,
+      } as T;
+    }),
   };
 }
 
@@ -208,35 +271,59 @@ export async function fetchAllPages<T>(
   pageLimit = MAX_PAGES
 ): Promise<ApiCollection<T>> {
   const cacheKey = `${path}:${pageLimit}:${JSON.stringify(params)}`;
+  if (!bypassCache) {
+    const pending = pendingFetches.get(cacheKey);
+    if (pending) return pending as Promise<ApiCollection<T>>;
+  }
+
   const cached = memoryCache.get(cacheKey);
   if (!bypassCache && cached && cached.expiresAt > Date.now()) {
     return cached.value as ApiCollection<T>;
   }
 
-  const data: T[] = [];
-  let page = 1;
-  let lastPage = 1;
-  let latestMeta: PagedResponse<T>["meta"] | undefined;
+  if (!bypassCache) {
+    const persisted = await getDashboardV2ApiCache(cacheKey);
+    if (persisted) {
+      memoryCache.set(cacheKey, persisted);
+      return persisted.value as ApiCollection<T>;
+    }
+  }
 
-  do {
-    if (page > MAX_PAGES) throw new Error(`${path}: 페이지 수가 비정상적으로 많습니다.`);
-    const response = await didongGet<T>(path, { per_page: DEFAULT_PER_PAGE, ...params, page });
-    data.push(...(response.data ?? []));
-    latestMeta = response.meta;
-    lastPage = response.meta?.last_page ?? page;
-    page += 1;
-  } while (page <= lastPage && page <= pageLimit);
+  const request = (async () => {
+    const data: T[] = [];
+    let page = 1;
+    let lastPage = 1;
+    let latestMeta: PagedResponse<T>["meta"] | undefined;
 
-  const truncated = page <= lastPage;
+    do {
+      if (page > MAX_PAGES) throw new Error(`${path}: 페이지 수가 비정상적으로 많습니다.`);
+      const response = await didongGet<T>(path, { per_page: DEFAULT_PER_PAGE, ...params, page });
+      data.push(...responseRows<T>(response.data));
+      latestMeta = response.meta;
+      lastPage = response.meta?.last_page ?? page;
+      page += 1;
+    } while (page <= lastPage && page <= pageLimit);
 
-  const value: ApiCollection<T> = {
-    data,
-    total: latestMeta?.total ?? data.length,
-    meta: latestMeta,
-    truncated,
-  };
-  memoryCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value });
-  return value;
+    const truncated = page <= lastPage;
+
+    const value: ApiCollection<T> = {
+      data,
+      total: latestMeta?.total ?? data.length,
+      meta: latestMeta,
+      truncated,
+    };
+    const record = { expiresAt: Date.now() + CACHE_TTL_MS, value };
+    memoryCache.set(cacheKey, record);
+    await setDashboardV2ApiCache(cacheKey, record);
+    return value;
+  })();
+
+  if (!bypassCache) pendingFetches.set(cacheKey, request as Promise<ApiCollection<unknown>>);
+  try {
+    return await request;
+  } finally {
+    pendingFetches.delete(cacheKey);
+  }
 }
 
 async function safeFetch<T>(
@@ -269,14 +356,14 @@ async function fetchByCenter<T>(
   path: string,
   query: V2Query,
   extra?: Record<string, string | number | undefined>,
-  pageLimit = DASHBOARD_PAGE_LIMIT
+  pageLimit = DASHBOARD_PAGE_LIMIT,
+  includeExactCenterTotals = false
 ) {
   const chunks = [];
   const windows = monthWindows(query.startDate, query.endDate);
   for (const center of selectedCenters(query.center)) {
     for (const window of windows) {
-      chunks.push(
-        await safeFetch<T>(
+      const chunk = await safeFetch<T>(
           path,
           {
             center_type: center.code,
@@ -286,12 +373,17 @@ async function fetchByCenter<T>(
           },
           query.bypassCache,
           pageLimit
-        )
-      );
+        );
+      chunks.push(withCenter(chunk, center));
     }
   }
 
-  return mergeCollections(chunks, query);
+  const merged = mergeCollections(chunks, query);
+  if (includeExactCenterTotals) {
+    merged.centerTotals = await fetchExactCenterTotals<T>(path, query, extra);
+    merged.total = Object.values(merged.centerTotals).reduce((sum, value) => sum + value, 0);
+  }
+  return merged;
 }
 
 async function fetchByMonth<T>(
@@ -322,42 +414,51 @@ export async function fetchDashboardV2Sources(
     waitings: true,
     surveys: true,
     coupons: true,
-    websiteVisitors: true,
-    websiteStats: true,
   }
 ) {
   const pageLimit = options.pageLimit ?? DASHBOARD_PAGE_LIMIT;
-  const totals = options.totals
-    ? await fetchByCenter<DidongTotalRow>("/external/total", query, undefined, pageLimit)
-    : emptyCollection<DidongTotalRow>();
-  const visits = options.visits
-    ? await fetchByCenter<DidongVisitRow>("/external/visits", query, undefined, pageLimit)
-    : emptyCollection<DidongVisitRow>();
-  const waitings = options.waitings
-    ? await fetchByCenter<DidongWaitingRow>("/external/waitings", query, undefined, pageLimit)
-    : emptyCollection<DidongWaitingRow>();
-  const surveys = options.surveys
-    ? await fetchByCenter<DidongSurveyRow>("/external/surveys", query, undefined, pageLimit)
-    : emptyCollection<DidongSurveyRow>();
-  const coupons = options.coupons
-    ? await fetchByCenter<DidongCouponRow>("/external/coupons", query, undefined, pageLimit)
-    : emptyCollection<DidongCouponRow>();
-  const websiteVisitors = options.websiteVisitors
-    ? await fetchByMonth<DidongWebsiteVisitorRow>(
-      "/external/websiteVisitors",
-      query,
-      undefined,
-      pageLimit
-    )
-    : emptyCollection<DidongWebsiteVisitorRow>();
-  const websiteStats = options.websiteStats
-    ? await fetchByMonth<DidongWebsiteStatsRow>(
-      "/external/websiteVisitors/stats",
-      query,
-      undefined,
-      pageLimit
-    )
-    : emptyCollection<DidongWebsiteStatsRow>();
+  const exactTotals = options.exactTotals !== false;
+  const [
+    totals,
+    visits,
+    waitings,
+    surveys,
+    coupons,
+    websiteVisitors,
+    websiteStats,
+  ] = await Promise.all([
+    options.totals
+      ? fetchByCenter<DidongTotalRow>("/external/total", query, undefined, pageLimit, exactTotals)
+      : Promise.resolve(emptyCollection<DidongTotalRow>()),
+    options.visits
+      ? fetchByCenter<DidongVisitRow>("/external/visits", query, undefined, pageLimit, exactTotals)
+      : Promise.resolve(emptyCollection<DidongVisitRow>()),
+    options.waitings
+      ? fetchByCenter<DidongWaitingRow>("/external/waitings", query, undefined, pageLimit, exactTotals)
+      : Promise.resolve(emptyCollection<DidongWaitingRow>()),
+    options.surveys
+      ? fetchByCenter<DidongSurveyRow>("/external/surveys", query, undefined, pageLimit, exactTotals)
+      : Promise.resolve(emptyCollection<DidongSurveyRow>()),
+    options.coupons
+      ? fetchByCenter<DidongCouponRow>("/external/coupons", query, undefined, pageLimit, false)
+      : Promise.resolve(emptyCollection<DidongCouponRow>()),
+    options.websiteVisitors
+      ? fetchByMonth<DidongWebsiteVisitorRow>(
+        "/external/websiteVisitors",
+        query,
+        undefined,
+        pageLimit
+      )
+      : Promise.resolve(emptyCollection<DidongWebsiteVisitorRow>()),
+    options.websiteStats
+      ? fetchByMonth<DidongWebsiteStatsRow>(
+        "/external/websiteVisitors/stats",
+        query,
+        undefined,
+        pageLimit
+      )
+      : Promise.resolve(emptyCollection<DidongWebsiteStatsRow>()),
+  ]);
 
   return {
     totals,
