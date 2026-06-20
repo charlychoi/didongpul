@@ -1,4 +1,5 @@
 import { Client, createClient } from "@libsql/client";
+import path from "path";
 
 type CacheRecord = {
   expiresAt: number;
@@ -21,6 +22,14 @@ function assertIsolatedV2Database() {
   return v2Url;
 }
 
+function resolveV2DatabaseUrl(url: string) {
+  if (process.env.NODE_ENV === "production" && url.startsWith("file:./")) {
+    return `file:/tmp/${path.basename(url.slice("file:./".length))}`;
+  }
+
+  return url;
+}
+
 export function getDashboardV2DatabaseStatus() {
   const v2Url = assertIsolatedV2Database();
 
@@ -40,8 +49,9 @@ export function getDashboardV2DatabaseStatus() {
 }
 
 function getV2DbClient() {
-  const url = assertIsolatedV2Database();
-  if (!url) return null;
+  const rawUrl = assertIsolatedV2Database();
+  if (!rawUrl) return null;
+  const url = resolveV2DatabaseUrl(rawUrl);
 
   if (!globalForV2Db.dashboardV2Db) {
     globalForV2Db.dashboardV2Db = createClient({

@@ -54,8 +54,12 @@ export async function getDashboardV2(
     const pending = pendingDashboardResponses.get(responseCacheKey);
     if (pending) return { data: await pending };
 
-    const cached = await getDashboardV2ApiCache(responseCacheKey);
-    if (cached) return { data: cached.value as DashboardV2Result };
+    try {
+      const cached = await getDashboardV2ApiCache(responseCacheKey);
+      if (cached) return { data: cached.value as DashboardV2Result };
+    } catch (error) {
+      console.warn("dashboard v2 response cache read failed", error);
+    }
   }
 
   const responsePromise = (async () => {
@@ -85,10 +89,14 @@ export async function getDashboardV2(
     }
 
     const data = buildDashboardV2(query, source);
-    await setDashboardV2ApiCache(responseCacheKey, {
-      expiresAt: Date.now() + DASHBOARD_RESPONSE_TTL_MS,
-      value: data,
-    });
+    try {
+      await setDashboardV2ApiCache(responseCacheKey, {
+        expiresAt: Date.now() + DASHBOARD_RESPONSE_TTL_MS,
+        value: data,
+      });
+    } catch (error) {
+      console.warn("dashboard v2 response cache write failed", error);
+    }
     return data;
   })();
 

@@ -455,8 +455,25 @@ export default function DashboardV2Client({ view }: { view: View }) {
     }, 1000);
     fetch(apiUrl, { cache: "no-store" })
       .then(async (response) => {
-        if (!response.ok) throw new Error((await response.json()).error || "데이터 조회에 실패했습니다.");
-        return response.json();
+        const text = await response.text();
+        let json: unknown = null;
+        if (text.trim()) {
+          try {
+            json = JSON.parse(text);
+          } catch {
+            throw new Error("데이터 응답을 처리하지 못했습니다. 잠시 후 새로고침해주세요.");
+          }
+        }
+
+        if (!response.ok) {
+          const message =
+            json && typeof json === "object" && "error" in json
+              ? String((json as { error?: unknown }).error)
+              : "데이터 조회에 실패했습니다.";
+          throw new Error(message);
+        }
+        if (!json) throw new Error("데이터 응답이 지연되고 있습니다. 잠시 후 새로고침해주세요.");
+        return json as DashboardV2Data;
       })
       .then((json) => {
         if (mounted) {
