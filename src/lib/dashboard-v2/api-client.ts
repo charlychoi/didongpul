@@ -16,7 +16,8 @@ const DEFAULT_BASE_URL = "https://api.didong.kr/api";
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_PAGES = 500;
 const MIN_REQUEST_GAP_MS = 450;
-const DASHBOARD_PAGE_LIMIT = 3;
+const DASHBOARD_PAGE_LIMIT = 10;
+const DEFAULT_PER_PAGE = 100;
 
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -135,7 +136,7 @@ export async function fetchAllPages<T>(
 
   do {
     if (page > MAX_PAGES) throw new Error(`${path}: 페이지 수가 비정상적으로 많습니다.`);
-    const response = await didongGet<T>(path, { ...params, page });
+    const response = await didongGet<T>(path, { per_page: DEFAULT_PER_PAGE, ...params, page });
     data.push(...(response.data ?? []));
     latestMeta = response.meta;
     lastPage = response.meta?.last_page ?? page;
@@ -149,7 +150,6 @@ export async function fetchAllPages<T>(
     total: latestMeta?.total ?? data.length,
     meta: latestMeta,
     truncated,
-    error: truncated ? `${path}: 데이터가 많아 ${pageLimit}페이지까지만 빠르게 조회했습니다.` : undefined,
   };
   memoryCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value });
   return value;

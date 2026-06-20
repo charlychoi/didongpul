@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  AlertTriangle,
+  Clock,
   Download,
+  Info,
+  Loader2,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -231,11 +233,26 @@ export default function DashboardV2Client({ view }: { view: View }) {
   const [data, setData] = useState<DashboardV2Data | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const startDate = searchParams.get("start_date") || daysAgo(6);
   const endDate = searchParams.get("end_date") || today();
   const center = searchParams.get("center") || "ALL";
   const refresh = searchParams.get("refresh") || "0";
+  const rangeDays = Math.max(
+    1,
+    Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86_400_000) + 1
+  );
+  const activePreset =
+    startDate === today() && endDate === today()
+      ? "today"
+      : startDate === daysAgo(6) && endDate === today()
+        ? "7days"
+        : startDate === monthStart() && endDate === today()
+          ? "thisMonth"
+          : startDate === monthStart(-1) && endDate === monthEnd(-1)
+            ? "lastMonth"
+            : "custom";
 
   const apiUrl = useMemo(() => {
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate, center });
@@ -245,6 +262,16 @@ export default function DashboardV2Client({ view }: { view: View }) {
 
   useEffect(() => {
     let mounted = true;
+    const startedAt = Date.now();
+    const startTimer = window.setTimeout(() => {
+      if (mounted) {
+        setLoading(true);
+        setElapsedSeconds(0);
+      }
+    }, 0);
+    const timer = window.setInterval(() => {
+      if (mounted) setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
     fetch(apiUrl, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error((await response.json()).error || "데이터 조회에 실패했습니다.");
@@ -261,9 +288,13 @@ export default function DashboardV2Client({ view }: { view: View }) {
       })
       .finally(() => {
         if (mounted) setLoading(false);
+        window.clearTimeout(startTimer);
+        window.clearInterval(timer);
       });
     return () => {
       mounted = false;
+      window.clearTimeout(startTimer);
+      window.clearInterval(timer);
     };
   }, [apiUrl]);
 
@@ -301,47 +332,78 @@ export default function DashboardV2Client({ view }: { view: View }) {
   }
 
   const kpis = data?.kpis || {};
+  const quickRanges = [
+    { key: "today", label: "오늘" },
+    { key: "7days", label: "최근 7일" },
+    { key: "thisMonth", label: "이번 달" },
+    { key: "lastMonth", label: "지난 달" },
+  ];
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div>
         <div>
           <p className="text-xs font-medium text-blue-700">API 기반 대시보드 v2</p>
           <h1 className="text-2xl font-bold text-gray-900">{VIEW_LABEL[view]}</h1>
           <p className="mt-1 text-sm text-gray-500">엑셀 업로드 없이 외부 API를 직접 조회합니다.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => setPreset("today")} className="px-3 py-2 text-sm rounded-md border border-gray-200 bg-white hover:bg-gray-50">오늘</button>
-          <button onClick={() => setPreset("7days")} className="px-3 py-2 text-sm rounded-md border border-gray-200 bg-white hover:bg-gray-50">최근 7일</button>
-          <button onClick={() => setPreset("thisMonth")} className="px-3 py-2 text-sm rounded-md border border-gray-200 bg-white hover:bg-gray-50">이번 달</button>
-          <button onClick={() => setPreset("lastMonth")} className="px-3 py-2 text-sm rounded-md border border-gray-200 bg-white hover:bg-gray-50">지난 달</button>
-        </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-wrap items-center gap-3">
-        <input type="date" value={startDate} onChange={(event) => updateParams({ start_date: event.target.value })} className="h-9 rounded-md border border-gray-200 px-3 text-sm" />
-        <span className="text-sm text-gray-400">~</span>
-        <input type="date" value={endDate} onChange={(event) => updateParams({ end_date: event.target.value })} className="h-9 rounded-md border border-gray-200 px-3 text-sm" />
-        <select value={center} onChange={(event) => updateParams({ center: event.target.value })} className="h-9 rounded-md border border-gray-200 px-3 text-sm">
-          {CENTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-        </select>
-        <button onClick={() => updateParams({ refresh: "1" })} className="h-9 w-9 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50" title="새로고침">
-          <RefreshCw className="h-4 w-4" />
-        </button>
-        <button onClick={downloadCsv} disabled={!data} className="h-9 w-9 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40" title="CSV 다운로드">
-          <Download className="h-4 w-4" />
-        </button>
+      <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-gray-500 mr-1">조회 기간</span>
+          {quickRanges.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setPreset(item.key)}
+              className={`px-3 py-2 text-sm rounded-md border ${activePreset === item.key ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+            >
+              {item.label}
+            </button>
+          ))}
+          {activePreset === "custom" && (
+            <span className="px-3 py-2 text-sm rounded-md border border-gray-200 bg-gray-50 text-gray-600">
+              직접 선택
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <input type="date" value={startDate} onChange={(event) => updateParams({ start_date: event.target.value })} className="h-9 rounded-md border border-gray-200 px-3 text-sm" />
+          <span className="text-sm text-gray-400">~</span>
+          <input type="date" value={endDate} onChange={(event) => updateParams({ end_date: event.target.value })} className="h-9 rounded-md border border-gray-200 px-3 text-sm" />
+          <select value={center} onChange={(event) => updateParams({ center: event.target.value })} className="h-9 rounded-md border border-gray-200 px-3 text-sm">
+            {CENTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>
+          <button onClick={() => updateParams({ refresh: "1" })} disabled={loading} className="h-9 w-9 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50" title="새로고침">
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+          <button onClick={downloadCsv} disabled={!data || loading} className="h-9 w-9 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40" title="CSV 다운로드">
+            <Download className="h-4 w-4" />
+          </button>
+        </div>
         <div className="ml-auto text-xs text-gray-500">
           마지막 API 조회: {data?.sync.lastFetchedAt ? new Date(data.sync.lastFetchedAt).toLocaleString("ko-KR") : "-"}
         </div>
       </div>
 
-      {loading && <div className="bg-white border border-gray-200 rounded-lg p-10 text-center text-sm text-gray-500">데이터를 조회하고 있습니다.</div>}
+      {loading && (
+        <div className="bg-white border border-blue-100 rounded-lg p-8 text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-600" />
+          <p className="mt-3 text-sm font-medium text-gray-800">외부 API 데이터를 불러오는 중입니다.</p>
+          <p className="mt-1 text-xs text-gray-500">경과 시간 {elapsedSeconds}초</p>
+          {rangeDays >= 15 && (
+            <div className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              <Clock className="h-4 w-4" />
+              <span>조회 기간이 {rangeDays}일로 넓어 응답에 시간이 더 걸릴 수 있습니다.</span>
+            </div>
+          )}
+        </div>
+      )}
       {error && <div className="bg-red-50 border border-red-100 rounded-lg p-4 text-sm text-red-700">{error}</div>}
       {data?.sync.partial && (
-        <div className="bg-amber-50 border border-amber-100 rounded-lg p-4 text-sm text-amber-800 flex gap-2">
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <span>일부 API 응답에 실패했습니다. 표시 가능한 데이터만 반영했습니다.</span>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700 flex gap-2">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>외부 API 연결이 일시적으로 지연된 항목이 있습니다. 새로고침하면 최신 상태를 다시 확인합니다.</span>
         </div>
       )}
 
