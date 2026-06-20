@@ -50,11 +50,16 @@ async function getSyncedDbStats() {
       where: { center: { in: CENTERS } },
       _count: { id: true },
     }),
-    prisma.apiTotalRecord.groupBy({
-      by: ["center"],
-      where: { center: { in: CENTERS } },
-      _count: { id: true },
-    }),
+    prisma.apiTotalRecord
+      .groupBy({
+        by: ["center"],
+        where: { center: { in: CENTERS } },
+        _count: { id: true },
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.message.includes("api_total_records")) return [];
+        throw error;
+      }),
     prisma.cleanVisitLog.findMany({
       where: { center: { in: CENTERS } },
       select: { center: true, visitDate: true },

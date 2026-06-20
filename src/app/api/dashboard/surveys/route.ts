@@ -19,6 +19,18 @@ function mergeCounts<T extends string>(
   return typeof limit === "number" ? rows.slice(0, limit) : rows;
 }
 
+async function groupApiTotalWayToCome(where: Prisma.ApiTotalRecordWhereInput) {
+  try {
+    return await prisma.apiTotalRecord.groupBy({
+      by: ["wayToCome"], where: { ...where, wayToCome: { not: null } },
+      _count: { id: true }, orderBy: { _count: { id: "desc" } }, take: 10,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("api_total_records")) return [];
+    throw error;
+  }
+}
+
 export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session.isLoggedIn) {
@@ -68,10 +80,7 @@ export async function GET(request: NextRequest) {
     by: ["howFound"], where: { ...where, howFound: { not: null } },
     _count: { id: true }, orderBy: { _count: { id: "desc" } }, take: 10,
   });
-  const byTotalWayToCome = await prisma.apiTotalRecord.groupBy({
-    by: ["wayToCome"], where: { ...totalWhere, wayToCome: { not: null } },
-    _count: { id: true }, orderBy: { _count: { id: "desc" } }, take: 10,
-  });
+  const byTotalWayToCome = await groupApiTotalWayToCome(totalWhere);
   const mergedHowFound = mergeCounts(
     byHowFound.map((r) => ({ key: r.howFound, count: r._count.id })),
     byTotalWayToCome.map((r) => ({ key: r.wayToCome, count: r._count.id })),

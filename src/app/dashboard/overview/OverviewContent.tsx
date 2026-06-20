@@ -11,6 +11,15 @@ function calcTrend(current: number, prev: number, label: string) {
   return { pct: ((current - prev) / prev) * 100, label };
 }
 
+async function countApiTotalRecords(where: Parameters<typeof prisma.apiTotalRecord.count>[0]["where"]) {
+  try {
+    return await prisma.apiTotalRecord.count({ where });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("api_total_records")) return 0;
+    throw error;
+  }
+}
+
 async function fetchPeriodSummary(
   year: number,
   month: number | null,
@@ -33,12 +42,10 @@ async function fetchPeriodSummary(
       : null;
   const totalLongStay = monthly.reduce((s, r) => s + r.longStayCount, 0);
   const totalEduAttendance = monthly.reduce((s, r) => s + r.educationAttendanceCount, 0);
-  const totalRecords = await prisma.apiTotalRecord.count({
-    where: {
+  const totalRecords = await countApiTotalRecords({
       year,
       ...(month ? { month } : {}),
       ...(centerScope ? { center: centerScope } : {}),
-    },
   });
   return { totalVisits, totalUnique, avgStay, totalLongStay, totalEduAttendance, totalRecords, monthly };
 }
