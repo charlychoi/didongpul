@@ -5,17 +5,55 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 
-async function signInWithFallbackAdmin(email: string, password: string) {
-  const fallbackEmail = process.env.DASHBOARD_ADMIN_EMAIL;
+type FallbackAdmin = {
+  id: string;
+  password: string;
+  name: string;
+};
+
+function getFallbackAdmins(): FallbackAdmin[] {
+  const admins: FallbackAdmin[] = [];
+  const fallbackEmail = process.env.DASHBOARD_ADMIN_EMAIL?.trim();
   const fallbackPassword = process.env.DASHBOARD_ADMIN_PASSWORD;
 
-  if (!fallbackEmail || !fallbackPassword) return null;
-  if (email !== fallbackEmail || password !== fallbackPassword) return null;
+  if (fallbackEmail && fallbackPassword) {
+    admins.push({
+      id: fallbackEmail,
+      password: fallbackPassword,
+      name: process.env.DASHBOARD_ADMIN_NAME || "상상우리 관리자",
+    });
+  }
+
+  const extraAdmins = process.env.DASHBOARD_EXTRA_ADMINS || "";
+  extraAdmins
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((item) => {
+      const [id, adminPassword, name] = item.split(":");
+      if (id?.trim() && adminPassword) {
+        admins.push({
+          id: id.trim(),
+          password: adminPassword,
+          name: name?.trim() || id.trim(),
+        });
+      }
+    });
+
+  return admins;
+}
+
+async function signInWithFallbackAdmin(loginId: string, password: string) {
+  const fallbackAdmin = getFallbackAdmins().find(
+    (admin) => admin.id === loginId && admin.password === password
+  );
+
+  if (!fallbackAdmin) return null;
 
   return {
-    id: "dashboard-admin-env",
-    email: fallbackEmail,
-    name: process.env.DASHBOARD_ADMIN_NAME || "상상우리 관리자",
+    id: `dashboard-admin-env:${fallbackAdmin.id}`,
+    email: fallbackAdmin.id,
+    name: fallbackAdmin.name,
     role: "super_admin",
     centerScope: "ALL",
   };
@@ -39,11 +77,11 @@ async function saveLoginSession(user: {
 }
 
 export async function login(formData: FormData) {
-  const email = formData.get("email") as string;
+  const email = ((formData.get("email") as string) || "").trim();
   const password = formData.get("password") as string;
 
   if (!email || !password) {
-    return { error: "이메일과 비밀번호를 입력해주세요." };
+    return { error: "아이디와 비밀번호를 입력해주세요." };
   }
 
   let loginUser: {
@@ -58,11 +96,11 @@ export async function login(formData: FormData) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) {
       const fallbackUser = await signInWithFallbackAdmin(email, password);
-      if (!fallbackUser) return { error: "이메일 또는 비밀번호가 올바르지 않습니다." };
+      if (!fallbackUser) return { error: "아이디 또는 비밀번호가 올바르지 않습니다." };
       loginUser = fallbackUser;
     } else if (!(await bcrypt.compare(password, user.passwordHash))) {
       const fallbackUser = await signInWithFallbackAdmin(email, password);
-      if (!fallbackUser) return { error: "이메일 또는 비밀번호가 올바르지 않습니다." };
+      if (!fallbackUser) return { error: "아이디 또는 비밀번호가 올바르지 않습니다." };
       loginUser = fallbackUser;
     } else {
       await prisma.user.update({
