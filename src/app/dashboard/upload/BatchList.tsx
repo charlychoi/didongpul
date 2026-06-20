@@ -20,7 +20,7 @@ interface Batch {
   id: string;
   originalFilename: string;
   uploadedAt: string;
-  uploadedBy: { name: string } | null;
+  uploadedBy: { name: string };
   detectedSheetsCount: number;
   rowCountTotal: number;
   status: string;
@@ -120,7 +120,7 @@ export default function BatchList({ batches }: { batches: Batch[] }) {
                   <td className="px-4 py-3 text-gray-500 text-xs">
                     {new Date(b.uploadedAt).toLocaleString("ko-KR")}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{b.uploadedBy?.name ?? "시스템"}</td>
+                  <td className="px-4 py-3 text-gray-600">{b.uploadedBy.name}</td>
                   <td className="px-4 py-3 text-gray-600">{b.detectedSheetsCount}</td>
                   <td className="px-4 py-3 text-right text-gray-600">
                     {b.rowCountTotal.toLocaleString()}

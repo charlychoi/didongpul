@@ -1,54 +1,36 @@
-# 서울디지털동행플라자 통계 대시보드
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-Next.js 기반 관리자 대시보드입니다.
+## Getting Started
 
-## 구성
-
-- `v1`: `/dashboard/*` 엑셀 업로드 및 기존 API 동기화 기반 대시보드
-- `v2`: `/dashboard-v2/*` 외부 API 직접 조회 기반 운영 의사결정 대시보드
-
-v2 대상 센터는 기존 운영 범위와 동일하게 강동센터, 도봉센터, 동대문센터입니다.
-
-## 실행
+First, run the development server:
 
 ```bash
-npm install
 npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
 ```
 
-브라우저에서 `http://localhost:3000`으로 접속하면 로그인 화면으로 이동합니다.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## 환경변수
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-`.env.example`을 참고해 서버 환경변수를 설정합니다.
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-```bash
-DIDONG_API_BASE_URL=https://api.didong.kr/api
-DIDONG_API_KEY=replace-with-server-side-api-key
-SESSION_SECRET=replace-with-long-random-secret
-DATABASE_URL=file:./dev.db
-V2_DATABASE_URL=file:./dev-v2.db
-```
+## Learn More
 
-`DIDONG_API_KEY`는 서버에서만 사용하며 `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_` 같은 브라우저 공개 prefix를 붙이면 안 됩니다.
+To learn more about Next.js, take a look at the following resources:
 
-`DATABASE_URL`은 v1 운영 DB 전용입니다. v2에서 캐시, 로그, 집계 저장 등 영속 데이터가 필요해질 경우 반드시 `V2_DATABASE_URL`만 사용해야 하며, `DATABASE_URL`과 같은 값을 넣으면 안 됩니다. 현재 v2 대시보드는 DB 저장 없이 외부 API를 서버에서 직접 조회합니다.
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-## v2 주요 경로
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-- `/dashboard-v2/overview`: 종합 현황
-- `/dashboard-v2/centers`: 센터 비교
-- `/dashboard-v2/visitors`: 방문자 분석
-- `/dashboard-v2/programs`: 프로그램 분석
-- `/dashboard-v2/satisfaction`: 만족도 분석
-- `/dashboard-v2/marketing`: 홍보/웹 유입
-- `/dashboard-v2/operations`: 운영 점검
+## Deploy on Vercel
 
-프론트엔드는 `/api/v2/dashboard/*` 내부 API만 호출하고, 외부 Didong API 호출 및 개인정보 마스킹은 서버에서 처리합니다.
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-## 검증
-
-```bash
-npm run lint
-npm run build
-```
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

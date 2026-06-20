@@ -37,7 +37,7 @@ export async function login(formData: FormData) {
   session.isLoggedIn = true;
   await session.save();
 
-  redirect("/dashboard-v2/overview");
+  redirect("/dashboard");
 }
 
 export async function logout() {
