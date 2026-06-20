@@ -20,7 +20,7 @@ const DASHBOARD_PAGE_LIMIT = 10;
 const DEFAULT_PER_PAGE = 100;
 
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 30 * 60 * 1000;
 let lastRequestAt = 0;
 let requestQueue = Promise.resolve();
 
@@ -53,6 +53,90 @@ function toQueryString(params: Record<string, string | number | undefined>) {
     if (value !== undefined && value !== "") search.set(key, String(value));
   }
   return search.toString();
+}
+
+function parseDate(value?: string | null) {
+  if (!value) return null;
+  const normalized = value.includes("T") ? value : value.replace(" ", "T");
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateOnly(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function monthStart(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
+function monthEnd(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  return dateOnly(new Date(Date.UTC(year, month, 0)));
+}
+
+function addMonth(value: string) {
+  const [year, month] = value.split("-").map(Number);
+  return dateOnly(new Date(Date.UTC(year, month, 1)));
+}
+
+function monthWindows(startDate: string, endDate: string) {
+  const windows: Array<{ startDate: string; endDate: string }> = [];
+  let cursor = monthStart(startDate);
+  while (cursor <= endDate) {
+    windows.push({
+      startDate: cursor < startDate ? startDate : cursor,
+      endDate: monthEnd(cursor) > endDate ? endDate : monthEnd(cursor),
+    });
+    cursor = addMonth(cursor);
+  }
+  return windows;
+}
+
+function rowDate(row: unknown) {
+  const item = row as Record<string, unknown>;
+  const value =
+    item.entered_at ??
+    item.created_at ??
+    item.visited_at ??
+    item.survey_created_at ??
+    item.finished_at ??
+    item.used_at ??
+    item.date;
+  if (typeof value !== "string") return null;
+  const parsed = parseDate(value);
+  return parsed ? dateOnly(parsed) : null;
+}
+
+function filterRowsByDate<T>(rows: T[], query: V2Query) {
+  return rows.filter((row) => {
+    const date = rowDate(row);
+    return !date || (date >= query.startDate && date <= query.endDate);
+  });
+}
+
+function mergeCollections<T>(collections: ApiCollection<T>[], query: V2Query): ApiCollection<T> {
+  const seen = new Set<string>();
+  const data = [];
+  for (const row of filterRowsByDate(collections.flatMap((collection) => collection.data), query)) {
+    const key =
+      (row as { id?: string | number | null }).id?.toString() ||
+      (row as { uuid?: string | null }).uuid;
+    if (key) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    data.push(row);
+  }
+  const errors = collections.map((collection) => collection.error).filter(Boolean);
+  return {
+    data,
+    total: collections.reduce((sum, collection) => sum + collection.total, 0),
+    meta: collections.at(-1)?.meta,
+    truncated: collections.some((collection) => collection.truncated),
+    error: errors.join("\n") || undefined,
+  };
 }
 
 function normalizeError(path: string, status: number) {
@@ -188,29 +272,46 @@ async function fetchByCenter<T>(
   pageLimit = DASHBOARD_PAGE_LIMIT
 ) {
   const chunks = [];
+  const windows = monthWindows(query.startDate, query.endDate);
   for (const center of selectedCenters(query.center)) {
+    for (const window of windows) {
+      chunks.push(
+        await safeFetch<T>(
+          path,
+          {
+            center_type: center.code,
+            started_at: window.startDate,
+            finished_at: window.endDate,
+            ...extra,
+          },
+          query.bypassCache,
+          pageLimit
+        )
+      );
+    }
+  }
+
+  return mergeCollections(chunks, query);
+}
+
+async function fetchByMonth<T>(
+  path: string,
+  query: V2Query,
+  params?: Record<string, string | number | undefined>,
+  pageLimit = DASHBOARD_PAGE_LIMIT
+) {
+  const chunks = [];
+  for (const window of monthWindows(query.startDate, query.endDate)) {
     chunks.push(
       await safeFetch<T>(
         path,
-        {
-          center_type: center.code,
-          started_at: query.startDate,
-          finished_at: query.endDate,
-          ...extra,
-        },
+        { started_at: window.startDate, finished_at: window.endDate, ...params },
         query.bypassCache,
         pageLimit
       )
     );
   }
-
-  const errors = chunks.map((chunk) => chunk.error).filter(Boolean);
-  return {
-    data: chunks.flatMap((chunk) => chunk.data),
-    total: chunks.reduce((sum, chunk) => sum + chunk.total, 0),
-    truncated: chunks.some((chunk) => chunk.truncated),
-    error: errors.join("\n") || undefined,
-  } satisfies ApiCollection<T>;
+  return mergeCollections(chunks, query);
 }
 
 export async function fetchDashboardV2Sources(
@@ -242,18 +343,18 @@ export async function fetchDashboardV2Sources(
     ? await fetchByCenter<DidongCouponRow>("/external/coupons", query, undefined, pageLimit)
     : emptyCollection<DidongCouponRow>();
   const websiteVisitors = options.websiteVisitors
-    ? await safeFetch<DidongWebsiteVisitorRow>(
+    ? await fetchByMonth<DidongWebsiteVisitorRow>(
       "/external/websiteVisitors",
-      { started_at: query.startDate, finished_at: query.endDate },
-      query.bypassCache,
+      query,
+      undefined,
       pageLimit
     )
     : emptyCollection<DidongWebsiteVisitorRow>();
   const websiteStats = options.websiteStats
-    ? await safeFetch<DidongWebsiteStatsRow>(
+    ? await fetchByMonth<DidongWebsiteStatsRow>(
       "/external/websiteVisitors/stats",
-      { started_at: query.startDate, finished_at: query.endDate },
-      query.bypassCache,
+      query,
+      undefined,
       pageLimit
     )
     : emptyCollection<DidongWebsiteStatsRow>();

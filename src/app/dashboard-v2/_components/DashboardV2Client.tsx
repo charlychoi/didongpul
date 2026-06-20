@@ -76,6 +76,7 @@ const VIEW_LABEL: Record<View, string> = {
 };
 
 const COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2", "#64748b"];
+const clientDataCache = new Map<string, DashboardV2Data>();
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -262,6 +263,20 @@ export default function DashboardV2Client({ view }: { view: View }) {
 
   useEffect(() => {
     let mounted = true;
+    const cached = refresh !== "1" ? clientDataCache.get(apiUrl) : undefined;
+    if (cached) {
+      const cacheTimer = window.setTimeout(() => {
+        if (!mounted) return;
+        setData(cached);
+        setError("");
+        setLoading(false);
+        setElapsedSeconds(0);
+      }, 0);
+      return () => {
+        mounted = false;
+        window.clearTimeout(cacheTimer);
+      };
+    }
     const startedAt = Date.now();
     const startTimer = window.setTimeout(() => {
       if (mounted) {
@@ -279,6 +294,7 @@ export default function DashboardV2Client({ view }: { view: View }) {
       })
       .then((json) => {
         if (mounted) {
+          clientDataCache.set(apiUrl, json);
           setData(json);
           setError("");
         }
@@ -296,7 +312,7 @@ export default function DashboardV2Client({ view }: { view: View }) {
       window.clearTimeout(startTimer);
       window.clearInterval(timer);
     };
-  }, [apiUrl]);
+  }, [apiUrl, refresh]);
 
   function updateParams(next: Record<string, string>) {
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate, center });
