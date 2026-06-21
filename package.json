@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:v2-db-isolation": "node scripts/check-v2-db-isolation.mjs",
+    "test:v2-production": "node scripts/verify-v2-production.mjs",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:migrate": "npx prisma migrate dev",
     "db:studio": "npx prisma studio"
