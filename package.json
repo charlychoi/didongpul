@@ -12,6 +12,7 @@
     "test:v3-turso-config": "node --env-file=.env.local scripts/check-v3-turso-config.mjs",
     "test:v3-warehouse-cache": "V3_ENABLE_CUMULATIVE_SYNC=0 TMPDIR=/private/tmp node --env-file=.env.local --import tsx scripts/check-v3-warehouse-cache.ts",
     "test:v3-overview-range": "TMPDIR=/private/tmp node --env-file=.env.local --import tsx scripts/check-v3-overview-range.ts",
+    "test:v3-raw-fallback": "V3_DATABASE_URL=file:/private/tmp/didong-v3-raw-fallback.db V3_DATABASE_AUTH_TOKEN= DATABASE_URL=file:./v1-test.db DIDONG_API_KEY=test SESSION_SECRET=12345678901234567890123456789012 TMPDIR=/private/tmp node --import tsx scripts/check-v3-raw-fallback.ts",
     "test:v3-revisit": "TMPDIR=/private/tmp node --import tsx scripts/check-v3-revisit-logic.ts",
     "test:v3-production": "node scripts/verify-v3-production.mjs",
     "prefill:v3-practice": "TMPDIR=/private/tmp node --env-file=.env.local --import tsx scripts/prefill-v3-practice.ts",

@@ -87,12 +87,9 @@ function cumulativeStartDateForQuery(center: V3CenterFilter) {
 }
 
 async function fetchSyncRows<T extends RawRow>(sourceType: SourceType, query: V3Query) {
-  const rows: T[] = [];
-  const errors: string[] = [];
-  let truncated = false;
-
-  for (const center of selectedCenters(query.center)) {
-    const collection = await fetchAllPages<T>(
+  const collections = await Promise.all(
+    selectedCenters(query.center).map(async (center) => {
+      const collection = await fetchAllPages<T>(
       SOURCE_PATHS[sourceType],
       {
         center_type: center.code,
@@ -101,23 +98,27 @@ async function fetchSyncRows<T extends RawRow>(sourceType: SourceType, query: V3
       },
       query.bypassCache,
       500
-    ).catch((error) => ({
+      ).catch((error) => ({
       data: [],
       total: 0,
       truncated: false,
       error: error instanceof Error ? error.message : String(error),
-    }));
+      }));
 
-    if (collection.error) errors.push(collection.error);
-    truncated = truncated || collection.truncated === true;
-    rows.push(
-      ...collection.data.map((row) => ({
-        ...row,
-        center_type: row.center_type ?? center.code,
-        format_center_type: row.format_center_type ?? center.name,
-      }))
-    );
-  }
+      return {
+        collection,
+        rows: collection.data.map((row) => ({
+          ...row,
+          center_type: row.center_type ?? center.code,
+          format_center_type: row.format_center_type ?? center.name,
+        })),
+      };
+    })
+  );
+
+  const rows = collections.flatMap((item) => item.rows);
+  const errors = collections.map((item) => item.collection.error).filter(Boolean);
+  const truncated = collections.some((item) => item.collection.truncated === true);
 
   return {
     data: rows,
@@ -375,6 +376,27 @@ async function coveredSourceTypes(client: Client, query: V3Query, sourceTypes: S
   return new Set(result.rows.map((row) => String(row.source_type)));
 }
 
+async function availableRawSourceTypes(client: Client, query: V3Query, sourceTypes: SourceType[]) {
+  if (sourceTypes.length === 0) return new Set<string>();
+  const centers = selectedCenters(query.center).map((center) => center.code);
+  const sourcePlaceholders = sourceTypes.map(() => "?").join(", ");
+  const centerPlaceholders = centers.map(() => "?").join(", ");
+  const result = await client.execute({
+    sql: `
+      SELECT source_type, COUNT(*) AS row_count
+      FROM dashboard_v3_raw_records
+      WHERE source_type IN (${sourcePlaceholders})
+        AND occurred_date >= ?
+        AND occurred_date <= ?
+        AND center_code IN (${centerPlaceholders})
+      GROUP BY source_type
+      HAVING row_count > 0
+    `,
+    args: [...sourceTypes, query.startDate, query.endDate, ...centers],
+  });
+  return new Set(result.rows.map((row) => String(row.source_type)));
+}
+
 async function readRawRows<T extends RawRow>(client: Client, sourceType: SourceType, query: V3Query) {
   const centers = selectedCenters(query.center).map((center) => center.code);
   const centerFilter = centers.map(() => "?").join(", ");
@@ -394,13 +416,18 @@ async function readRawRows<T extends RawRow>(client: Client, sourceType: SourceT
   return result.rows.map((row) => JSON.parse(String(row.payload_json)) as T);
 }
 
-async function readWarehouseSource(client: Client, query: V3Query): Promise<V3SourceBundle> {
+async function readWarehouseSource(
+  client: Client,
+  query: V3Query,
+  sourceTypes: SourceType[] = ["total", "visit", "survey", "coupon", "waiting"]
+): Promise<V3SourceBundle> {
+  const wants = new Set(sourceTypes);
   const [totals, visits, surveys, coupons, waitings] = await Promise.all([
-    readRawRows<DidongTotalRow>(client, "total", query),
-    readRawRows<DidongVisitRow>(client, "visit", query),
-    readRawRows<DidongSurveyRow>(client, "survey", query),
-    readRawRows<DidongCouponRow>(client, "coupon", query),
-    readRawRows<DidongWaitingRow>(client, "waiting", query),
+    wants.has("total") ? readRawRows<DidongTotalRow>(client, "total", query) : Promise.resolve([]),
+    wants.has("visit") ? readRawRows<DidongVisitRow>(client, "visit", query) : Promise.resolve([]),
+    wants.has("survey") ? readRawRows<DidongSurveyRow>(client, "survey", query) : Promise.resolve([]),
+    wants.has("coupon") ? readRawRows<DidongCouponRow>(client, "coupon", query) : Promise.resolve([]),
+    wants.has("waiting") ? readRawRows<DidongWaitingRow>(client, "waiting", query) : Promise.resolve([]),
   ]);
 
   return {
@@ -440,12 +467,13 @@ function collectionForSource(source: V3SourceBundle, sourceType: SourceType) {
 
 async function fetchApiSource(query: V3Query, sourceTypes: SourceType[]) {
   const source = emptySourceBundle();
-  let fetched = 0;
 
-  for (const sourceType of sourceTypes) {
+  const results = await Promise.all(sourceTypes.map(async (sourceType) => {
     const collection = await fetchSyncRows(sourceType, query);
-    fetched += collection.data.length;
+    return { sourceType, collection };
+  }));
 
+  for (const { sourceType, collection } of results) {
     if (sourceType === "total") source.totals = collection as V3SourceBundle["totals"];
     if (sourceType === "visit") source.visits = collection as V3SourceBundle["visits"];
     if (sourceType === "survey") source.surveys = collection as V3SourceBundle["surveys"];
@@ -454,6 +482,7 @@ async function fetchApiSource(query: V3Query, sourceTypes: SourceType[]) {
   }
 
   source.fetchedAt = new Date().toISOString();
+  const fetched = results.reduce((sum, item) => sum + item.collection.data.length, 0);
   return { source, fetched };
 }
 
@@ -474,7 +503,7 @@ async function storeApiSource(
   }
 
   if (sourceTypes.includes("total")) {
-    const storedSource = await readWarehouseSource(client, query);
+    const storedSource = await readWarehouseSource(client, query, sourceTypes);
     storedSource.cumulativeTotals = await readCumulativeTotals(client, query);
     await writeSummaries(client, query, storedSource);
   }
@@ -533,7 +562,11 @@ export async function getOrSyncDashboardV3Source(
   }
 
   const covered = !query.bypassCache ? await coveredSourceTypes(client, query, sourceTypes) : new Set<string>();
-  const missingSourceTypes = sourceTypes.filter((sourceType) => !covered.has(sourceType));
+  const rawAvailable = !query.bypassCache
+    ? await availableRawSourceTypes(client, query, sourceTypes)
+    : new Set<string>();
+  const usableSourceTypes = new Set([...covered, ...rawAvailable]);
+  const missingSourceTypes = sourceTypes.filter((sourceType) => !usableSourceTypes.has(sourceType));
 
   if (missingSourceTypes.length > 0) {
     const { source, fetched } = await fetchApiSource(query, sourceTypes);
@@ -547,12 +580,12 @@ export async function getOrSyncDashboardV3Source(
     };
   }
 
-  const source = await readWarehouseSource(client, query);
+  const source = await readWarehouseSource(client, query, sourceTypes);
   if (sourceTypes.includes("total")) {
     source.cumulativeTotals = await ensureCumulativeTotals(client, query);
-    await writeSummaries(client, query, source);
   }
-  return { source, storage: "db", fetched: 0, upserted: 0 };
+  const hasExactSourceCoverage = sourceTypes.every((sourceType) => covered.has(sourceType));
+  return { source, storage: hasExactSourceCoverage ? "db" : "db_partial", fetched: 0, upserted: 0 };
 }
 
 function dateRange(startDate: string, endDate: string) {
@@ -701,7 +734,7 @@ export async function syncDashboardV3Range(options: SyncOptions) {
       upserted += result.upserted;
     }
     const source: V3SourceBundle = {
-      ...(await readWarehouseSource(client, query)),
+      ...(await readWarehouseSource(client, query, sourceTypes)),
     };
     const sourceErrors = [source.totals]
       .map((collection) => collection.error)

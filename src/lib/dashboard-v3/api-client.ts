@@ -14,7 +14,7 @@ import {
 import { getDashboardV3ApiCache, setDashboardV3ApiCache } from "./db";
 
 const DEFAULT_BASE_URL = "https://api.didong.kr/api";
-const REQUEST_TIMEOUT_MS = 25_000;
+const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_PAGES = 500;
 const MIN_REQUEST_GAP_MS = 80;
 const DASHBOARD_PAGE_LIMIT = 10;
@@ -251,7 +251,7 @@ export async function didongGet<T>(
   const qs = toQueryString(params);
   const url = `${getBaseUrl()}${path}${qs ? `?${qs}` : ""}`;
 
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     let response: Response;
     try {
       await waitForRequestSlot();
@@ -260,15 +260,15 @@ export async function didongGet<T>(
         cache: "no-store",
       });
     } catch (error) {
-      if (attempt < 3) {
-        await new Promise((resolve) => setTimeout(resolve, 3_000 * (attempt + 1)));
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)));
         continue;
       }
       throw error;
     }
 
-    if (response.status === 429 && attempt < 3) {
-      await new Promise((resolve) => setTimeout(resolve, 3_000 * (attempt + 1)));
+    if (response.status === 429 && attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)));
       continue;
     }
 
