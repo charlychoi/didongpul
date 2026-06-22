@@ -42,6 +42,10 @@ export function getDashboardV3DatabaseStatus() {
   const v3Url = assertIsolatedV3Database();
   const mode = getV3DatabaseMode(v3Url);
 
+  if (process.env.NODE_ENV === "production" && mode !== "turso") {
+    throw new Error("Production v3 requires V3_DATABASE_URL to use Turso/libSQL with a libsql:// URL.");
+  }
+
   if (!v3Url) {
     return {
       configured: false,
