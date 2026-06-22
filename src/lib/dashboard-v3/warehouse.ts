@@ -16,6 +16,7 @@ import {
 
 type RawRow = DidongTotalRow | DidongVisitRow | DidongSurveyRow | DidongWaitingRow | DidongCouponRow;
 type SourceType = "total" | "visit" | "survey" | "coupon" | "waiting";
+const CUMULATIVE_START_DATE = process.env.V3_CUMULATIVE_START_DATE || "2025-01-01";
 
 type SyncOptions = {
   startDate: string;
@@ -383,6 +384,7 @@ async function readWarehouseSource(client: Client, query: V3Query): Promise<V3So
 
   return {
     totals: { data: totals, total: totals.length, truncated: false },
+    cumulativeTotals: { data: [], total: 0, truncated: false },
     visits: { data: visits, total: visits.length, truncated: false },
     surveys: { data: surveys, total: surveys.length, truncated: false },
     coupons: { data: coupons, total: coupons.length, truncated: false },
@@ -391,6 +393,29 @@ async function readWarehouseSource(client: Client, query: V3Query): Promise<V3So
     websiteStats: { data: [], total: 0 },
     fetchedAt: new Date().toISOString(),
   };
+}
+
+async function readCumulativeTotals(client: Client, query: V3Query) {
+  const cumulativeQuery: V3Query = {
+    ...query,
+    startDate: CUMULATIVE_START_DATE,
+    endDate: query.endDate,
+  };
+  const rows = await readRawRows<DidongTotalRow>(client, "total", cumulativeQuery);
+  return { data: rows, total: rows.length, truncated: false };
+}
+
+async function ensureCumulativeTotals(client: Client, query: V3Query) {
+  const cumulativeQuery: V3Query = {
+    ...query,
+    startDate: CUMULATIVE_START_DATE,
+    endDate: query.endDate,
+  };
+  const hasCoverage = !query.bypassCache && (await hasExactCoverage(client, cumulativeQuery, ["total"]));
+  if (!hasCoverage && process.env.V3_ENABLE_CUMULATIVE_SYNC !== "0") {
+    await fetchAndStoreSourceType(client, "total", cumulativeQuery);
+  }
+  return readCumulativeTotals(client, query);
 }
 
 async function fetchAndStoreSourceType(client: Client, sourceType: SourceType, query: V3Query) {
@@ -411,6 +436,7 @@ export async function getOrSyncDashboardV3Source(
     return {
       source: {
         totals,
+        cumulativeTotals: { data: [], total: 0 },
         visits: { data: [], total: 0 },
         surveys: { data: [], total: 0 },
         coupons: { data: [], total: 0 },
@@ -428,7 +454,9 @@ export async function getOrSyncDashboardV3Source(
   const sourceTypes = requestedSourceTypes(options);
   const hasCoverage = !query.bypassCache && (await hasExactCoverage(client, query, sourceTypes));
   if (hasCoverage) {
-    return { source: await readWarehouseSource(client, query), storage: "db", fetched: 0, upserted: 0 };
+    const source = await readWarehouseSource(client, query);
+    if (sourceTypes.includes("total")) source.cumulativeTotals = await ensureCumulativeTotals(client, query);
+    return { source, storage: "db", fetched: 0, upserted: 0 };
   }
 
   let fetched = 0;
@@ -440,7 +468,10 @@ export async function getOrSyncDashboardV3Source(
   }
 
   const source = await readWarehouseSource(client, query);
-  if (sourceTypes.includes("total")) await writeSummaries(client, query, source);
+  if (sourceTypes.includes("total")) {
+    source.cumulativeTotals = await ensureCumulativeTotals(client, query);
+    await writeSummaries(client, query, source);
+  }
   return { source, storage: "api_then_db", fetched, upserted };
 }
 

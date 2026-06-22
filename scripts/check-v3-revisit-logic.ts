@@ -55,6 +55,60 @@ const source: V3SourceBundle = {
       },
     ],
   },
+  cumulativeTotals: {
+    total: 7,
+    data: [
+      {
+        center_type: 2,
+        name: "테스트0",
+        contact: "010-0000-0000",
+        entered_at: "2025-01-02 10:00:00",
+        leaved_at: "2025-01-02 11:00:00",
+      },
+      {
+        center_type: 2,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-01 10:00:00",
+        leaved_at: "2026-06-01 11:00:00",
+      },
+      {
+        center_type: 2,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-01 14:00:00",
+        leaved_at: "2026-06-01 15:00:00",
+      },
+      {
+        center_type: 2,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-02 10:00:00",
+        leaved_at: "2026-06-02 11:00:00",
+      },
+      {
+        center_type: 3,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-02 13:00:00",
+        leaved_at: "2026-06-02 14:00:00",
+      },
+      {
+        center_type: 2,
+        name: "테스트2",
+        contact: "010-0000-0002",
+        entered_at: "2026-06-01 10:00:00",
+        leaved_at: "2026-06-01 11:00:00",
+      },
+      {
+        center_type: 2,
+        name: "테스트3",
+        contact: "010-0000-0003",
+        entered_at: "2026-06-01 12:00:00",
+        leaved_at: "2026-06-01 13:00:00",
+      },
+    ],
+  },
   visits: {
     total: 6,
     centerTotals: {
@@ -125,12 +179,12 @@ function assertEqual(actual: unknown, expected: unknown, label: string) {
   }
 }
 
-assertEqual(result.kpis.uniqueUsers, 3, "uniqueUsers");
+assertEqual(result.kpis.uniqueUsers, 4, "uniqueUsers");
 assertEqual(result.kpis.totalVisits, 5, "totalVisits");
 assertEqual(result.kpis.dedupedVisits, 5, "dedupedVisits");
-assertEqual(result.kpis.newUsers, 1, "newUsers");
-assertEqual(result.kpis.revisitUsers, 4, "revisitUsers");
-assertEqual(result.kpis.revisitRate, 80, "revisitRate");
+assertEqual(result.kpis.newUsers, 4, "monthlyUniqueUsers");
+assertEqual(result.kpis.revisitUsers, 2, "standardRevisitUsers");
+assertEqual(result.kpis.revisitRate, 33.3, "standardRevisitRate");
 assertEqual(
   result.charts.visitCountDistribution.some((item) => item.name === "횟수 미상" && item.value === 1),
   true,

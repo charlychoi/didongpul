@@ -43,18 +43,24 @@ function userKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
   const user = row.user;
   const contact = "contact" in row ? row.contact : null;
   const name = "name" in row ? row.name : null;
-  return (
-    user?.contact ||
-    contact ||
-    user?.id?.toString() ||
-    user?.uuid ||
-    [name, row.entered_at, row.center_type].filter(Boolean).join("|") ||
-    "unknown"
-  );
+  const personName = (user?.name || name || "").trim();
+  const personContact = (user?.contact || contact || "").replace(/\D/g, "");
+  if (personName && personContact) return `${personName}${personContact}`;
+  return [personName || user?.id || user?.uuid || "unknown", personContact || row.entered_at || row.center_type || ""]
+    .filter(Boolean)
+    .join("|");
 }
 
 function visitEventKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
   return `${userKey(row)}|${centerName(row)}|${dateKey(row.entered_at)}`;
+}
+
+function monthKey(value: string) {
+  return value.slice(0, 7);
+}
+
+function monthVisitorKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
+  return `${userKey(row)}|${centerName(row)}`;
 }
 
 function isFirstVisitLabel(value: unknown) {
@@ -185,6 +191,7 @@ function previousRange(query: V3Query) {
 export function makeEmptyV3Result(query: V3Query) {
   return buildDashboardV3(query, {
     totals: { data: [], total: 0 },
+    cumulativeTotals: { data: [], total: 0 },
     visits: { data: [], total: 0 },
     waitings: { data: [], total: 0 },
     surveys: { data: [], total: 0 },
@@ -197,6 +204,7 @@ export function makeEmptyV3Result(query: V3Query) {
 
 export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
   const visitRows = source.visits.data.length ? source.visits.data : source.totals.data;
+  const cumulativeRows = source.cumulativeTotals?.data ?? source.totals.data;
   const surveyRows = source.surveys.data.length ? source.surveys.data : source.totals.data;
   const countVisitByEvent = new Map<string, unknown>();
   for (const row of source.totals.data) {
@@ -211,6 +219,9 @@ export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
   const dedupedVisitRows: typeof visitRows = [];
   const dailyVisits = new Map<string, number>();
   const centerVisits = new Map<string, number>();
+  const centerMonthlyUnique = new Map<string, Set<string>>();
+  const centerCumulativeDailyVisits = new Map<string, number>();
+  const centerMonthlyUniqueCount = new Map<string, number>();
   const centerUnique = new Map<string, Set<string>>();
   const centerStayValues = new Map<string, number[]>();
   const centerSurveys = new Map<string, { visits: number; surveys: number; satisfaction: number[]; revisit: number; responses: number }>();
@@ -258,6 +269,8 @@ export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
       inc(visitCountDistribution, visitCountBucket(countVisit, visitSequence, hasCountVisitHistory));
       inc(dailyVisits, dateKey(row.entered_at));
       inc(centerVisits, center);
+      if (!centerMonthlyUnique.has(center)) centerMonthlyUnique.set(center, new Set());
+      centerMonthlyUnique.get(center)!.add(monthVisitorKey(row));
       if (!centerUnique.has(center)) centerUnique.set(center, new Set());
       centerUnique.get(center)!.add(key);
 
@@ -411,6 +424,26 @@ export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
   );
   const convertedUsers = [...linkedWebsiteUsers].filter((userId) => visitUsers.has(userId)).length;
 
+  const selectedMonth = monthKey(query.startDate);
+  const cumulativeDailyKeys = new Set<string>();
+  const monthlyUniqueKeys = new Set<string>();
+  for (const row of cumulativeRows) {
+    const center = centerName(row);
+    const dailyKey = visitEventKey(row);
+    if (!cumulativeDailyKeys.has(dailyKey)) {
+      cumulativeDailyKeys.add(dailyKey);
+      inc(centerCumulativeDailyVisits, center);
+    }
+    if (monthKey(dateKey(row.entered_at)) === selectedMonth) {
+      monthlyUniqueKeys.add(monthVisitorKey(row));
+      if (!centerMonthlyUnique.has(center)) centerMonthlyUnique.set(center, new Set());
+      centerMonthlyUnique.get(center)!.add(monthVisitorKey(row));
+    }
+  }
+  for (const center of V3_CENTERS) {
+    centerMonthlyUniqueCount.set(center.name, centerMonthlyUnique.get(center.name)?.size ?? 0);
+  }
+
   const couponTotal = source.coupons.data.length;
   const couponGiven = source.coupons.data.filter((row) => row.used_at || row.give_at).length;
   const couponNotUsed = source.coupons.data.filter((row) => !(row.used_at || row.give_at)).length;
@@ -433,6 +466,9 @@ export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
 
   const uniqueUsers = dailyCenterVisitCounts.size;
   const dedupedVisits = [...dailyCenterVisitCounts.values()].reduce((sum, value) => sum + value, 0);
+  const cumulativeVisitCount = [...centerCumulativeDailyVisits.values()].reduce((sum, value) => sum + value, 0) || dedupedVisits;
+  const monthlyUniqueUserCount = monthlyUniqueKeys.size || uniqueUsers;
+  const standardRevisitUsers = Math.max(0, cumulativeVisitCount - monthlyUniqueUserCount);
   const shortStayCount = stayValues.filter((value) => value <= 30).length;
   const longStay2hCount = stayValues.filter((value) => value >= 120).length;
   const totalVisits = dedupedVisits;
@@ -482,7 +518,12 @@ export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
     return {
       center: name,
       visits,
-      uniqueUsers: centerUnique.get(name)?.size ?? 0,
+      uniqueUsers: centerMonthlyUniqueCount.get(name) ?? centerUnique.get(name)?.size ?? 0,
+      cumulativeVisits: centerCumulativeDailyVisits.get(name) ?? visits,
+      standardRevisitRate: percent(
+        Math.max(0, (centerCumulativeDailyVisits.get(name) ?? visits) - (centerMonthlyUniqueCount.get(name) ?? centerUnique.get(name)?.size ?? 0)),
+        centerCumulativeDailyVisits.get(name) ?? visits
+      ),
       avgStayMinutes: Math.round(avg(centerStayValues.get(name) ?? []) ?? 0),
       surveyResponseRate: percent(centerSurvey?.surveys ?? 0, visits),
       satisfaction: Math.round((avg(centerSurvey?.satisfaction ?? []) ?? 0) * 10) / 10,
@@ -560,11 +601,12 @@ export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
     },
     kpis: {
       totalVisits,
-      uniqueUsers,
+      uniqueUsers: monthlyUniqueUserCount,
       dedupedVisits,
-      newUsers: firstVisitEvents,
-      revisitUsers: revisitVisitEvents,
-      revisitRate: percent(revisitVisitEvents, dedupedVisits),
+      newUsers: monthlyUniqueUserCount,
+      revisitUsers: standardRevisitUsers,
+      revisitRate: percent(standardRevisitUsers, cumulativeVisitCount),
+      cumulativeVisits: cumulativeVisitCount,
       avgStayMinutes: Math.round(avg(stayValues) ?? 0),
       shortStayCount,
       shortStayRate: percent(shortStayCount, stayValues.length),
