@@ -44,13 +44,45 @@ function userKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
   const contact = "contact" in row ? row.contact : null;
   const name = "name" in row ? row.name : null;
   return (
-    user?.id?.toString() ||
-    user?.uuid ||
     user?.contact ||
     contact ||
+    user?.id?.toString() ||
+    user?.uuid ||
     [name, row.entered_at, row.center_type].filter(Boolean).join("|") ||
     "unknown"
   );
+}
+
+function visitEventKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
+  return `${userKey(row)}|${centerName(row)}|${dateKey(row.entered_at)}`;
+}
+
+function isFirstVisitLabel(value: unknown) {
+  const numeric = asNumber(value);
+  if (numeric != null) return numeric <= 1;
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (text.includes("첫")) return true;
+  if (text.includes("2") || text.includes("3") || text.includes("4") || text.includes("5") || text.includes("이상")) {
+    return false;
+  }
+  return null;
+}
+
+function visitCountBucket(value: unknown, fallbackCount: number) {
+  const text = String(value ?? "").trim();
+  if (text.includes("첫")) return "첫 방문";
+  if (text.includes("2") || text.includes("3")) return "2~3회";
+  if (text.includes("4") || text.includes("5")) return "4~5회";
+  if (text.includes("6") || text.includes("7") || text.includes("8") || text.includes("9") || text.includes("10")) {
+    return "6~10회";
+  }
+  if (text.includes("이상")) return "11회 이상";
+  if (fallbackCount === 1) return "첫 방문";
+  if (fallbackCount <= 3) return "2~3회";
+  if (fallbackCount <= 5) return "4~5회";
+  if (fallbackCount <= 10) return "6~10회";
+  return "11회 이상";
 }
 
 function ageBucket(value: unknown) {
@@ -165,6 +197,14 @@ export function makeEmptyV2Result(query: V2Query) {
 export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   const visitRows = source.visits.data.length ? source.visits.data : source.totals.data;
   const surveyRows = source.surveys.data.length ? source.surveys.data : source.totals.data;
+  const countVisitByEvent = new Map<string, unknown>();
+  for (const row of source.totals.data) {
+    const key = visitEventKey(row);
+    const isFirst = isFirstVisitLabel(row.count_visit);
+    if (isFirst === false || !countVisitByEvent.has(key)) {
+      countVisitByEvent.set(key, row.count_visit);
+    }
+  }
   const dailyCenterVisitKeys = new Set<string>();
   const dailyCenterVisitCounts = new Map<string, number>();
   const dedupedVisitRows: typeof visitRows = [];
@@ -189,18 +229,28 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   let missingUserCount = 0;
   let missingContactCount = 0;
   let surveyMissingCount = 0;
+  let firstVisitEvents = 0;
+  let revisitVisitEvents = 0;
   const stayValues: number[] = [];
 
   for (const row of visitRows) {
     const key = userKey(row);
     const center = centerName(row);
-    const visitDate = dateKey(row.entered_at);
-    const dailyCenterVisitKey = `${key}|${center}|${visitDate}`;
+    const dailyCenterVisitKey = visitEventKey(row);
     if (!dailyCenterVisitKeys.has(dailyCenterVisitKey)) {
       dailyCenterVisitKeys.add(dailyCenterVisitKey);
-      dailyCenterVisitCounts.set(key, (dailyCenterVisitCounts.get(key) ?? 0) + 1);
+      const visitSequence = (dailyCenterVisitCounts.get(key) ?? 0) + 1;
+      dailyCenterVisitCounts.set(key, visitSequence);
       dedupedVisitRows.push(row);
-      inc(dailyVisits, visitDate);
+      const countVisit = "count_visit" in row ? row.count_visit : countVisitByEvent.get(dailyCenterVisitKey);
+      const isFirstByHistory = isFirstVisitLabel(countVisit);
+      if (isFirstByHistory === true || (isFirstByHistory == null && visitSequence === 1)) {
+        firstVisitEvents += 1;
+      } else {
+        revisitVisitEvents += 1;
+      }
+      inc(visitCountDistribution, visitCountBucket(countVisit, visitSequence));
+      inc(dailyVisits, dateKey(row.entered_at));
       inc(centerVisits, center);
       if (!centerUnique.has(center)) centerUnique.set(center, new Set());
       centerUnique.get(center)!.add(key);
@@ -244,14 +294,6 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
       end.setMinutes(59, 59, 999);
       if (entered && entered <= end && (!left || left >= start)) inc(hourlyOccupancy, `${hour}시`);
     }
-  }
-
-  for (const count of dailyCenterVisitCounts.values()) {
-    if (count === 1) inc(visitCountDistribution, "첫 방문");
-    else if (count <= 3) inc(visitCountDistribution, "2~3회");
-    else if (count <= 5) inc(visitCountDistribution, "4~5회");
-    else if (count <= 10) inc(visitCountDistribution, "6~10회");
-    else inc(visitCountDistribution, "11회 이상");
   }
 
   const surveyScores = {
@@ -385,8 +427,6 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
 
   const uniqueUsers = dailyCenterVisitCounts.size;
   const dedupedVisits = [...dailyCenterVisitCounts.values()].reduce((sum, value) => sum + value, 0);
-  const firstVisitEvents = uniqueUsers;
-  const revisitVisitEvents = Math.max(0, dedupedVisits - firstVisitEvents);
   const shortStayCount = stayValues.filter((value) => value <= 30).length;
   const longStay2hCount = stayValues.filter((value) => value >= 120).length;
   const totalVisits = dedupedVisits;

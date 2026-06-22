@@ -2,7 +2,51 @@ import { buildDashboardV2 } from "../src/lib/dashboard-v2/aggregator";
 import type { V2SourceBundle } from "../src/lib/dashboard-v2/types";
 
 const source: V2SourceBundle = {
-  totals: { data: [], total: 0 },
+  totals: {
+    total: 5,
+    data: [
+      {
+        center_type: 2,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-01 10:00:00",
+        leaved_at: "2026-06-01 11:00:00",
+        count_visit: "5회 이상",
+      },
+      {
+        center_type: 2,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-01 14:00:00",
+        leaved_at: "2026-06-01 15:00:00",
+        count_visit: "5회 이상",
+      },
+      {
+        center_type: 2,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-02 10:00:00",
+        leaved_at: "2026-06-02 11:00:00",
+        count_visit: "5회 이상",
+      },
+      {
+        center_type: 3,
+        name: "테스트1",
+        contact: "010-0000-0001",
+        entered_at: "2026-06-02 13:00:00",
+        leaved_at: "2026-06-02 14:00:00",
+        count_visit: "5회 이상",
+      },
+      {
+        center_type: 2,
+        name: "테스트2",
+        contact: "010-0000-0002",
+        entered_at: "2026-06-01 10:00:00",
+        leaved_at: "2026-06-01 11:00:00",
+        count_visit: "첫 방문",
+      },
+    ],
+  },
   visits: {
     total: 5,
     centerTotals: {
@@ -69,9 +113,9 @@ function assertEqual(actual: unknown, expected: unknown, label: string) {
 assertEqual(result.kpis.uniqueUsers, 2, "uniqueUsers");
 assertEqual(result.kpis.totalVisits, 4, "totalVisits");
 assertEqual(result.kpis.dedupedVisits, 4, "dedupedVisits");
-assertEqual(result.kpis.newUsers, 2, "newUsers");
-assertEqual(result.kpis.revisitUsers, 2, "revisitUsers");
-assertEqual(result.kpis.revisitRate, 50, "revisitRate");
+assertEqual(result.kpis.newUsers, 1, "newUsers");
+assertEqual(result.kpis.revisitUsers, 3, "revisitUsers");
+assertEqual(result.kpis.revisitRate, 75, "revisitRate");
 
 const gangdongVisits = result.centers.find((center) => center.center === "강동센터")?.visits;
 const dobongVisits = result.centers.find((center) => center.center === "도봉센터")?.visits;
