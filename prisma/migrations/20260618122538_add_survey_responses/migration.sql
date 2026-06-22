@@ -1,0 +1,28 @@
+-- CreateTable
+CREATE TABLE "survey_responses" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "upload_batch_id" TEXT NOT NULL,
+    "sheet_name" TEXT NOT NULL,
+    "row_number" INTEGER NOT NULL,
+    "center" TEXT,
+    "respondent_name_masked" TEXT,
+    "respondent_key" TEXT,
+    "phone_hash" TEXT,
+    "gender" TEXT,
+    "age_group" INTEGER,
+    "residence" TEXT,
+    "how_found" TEXT,
+    "visit_count" TEXT,
+    "participated_programs" TEXT,
+    "favorite_program" TEXT,
+    "program_satisfaction" TEXT,
+    "operation_satisfaction" TEXT,
+    "digital_help_satisfaction" TEXT,
+    "will_return" TEXT,
+    "response_date" DATETIME,
+    "year" INTEGER,
+    "month" INTEGER,
+    "raw_json" TEXT NOT NULL,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "survey_responses_upload_batch_id_fkey" FOREIGN KEY ("upload_batch_id") REFERENCES "upload_batches" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);

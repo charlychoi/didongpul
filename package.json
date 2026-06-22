@@ -1,0 +1,57 @@
+{
+  "name": "didong-dashboard-v3",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build --webpack",
+    "postinstall": "prisma generate",
+    "start": "next start",
+    "lint": "eslint",
+    "test:v3-db-isolation": "node scripts/check-v3-db-isolation.mjs",
+    "test:v3-turso-config": "node --env-file=.env.local scripts/check-v3-turso-config.mjs",
+    "test:v3-warehouse-cache": "TMPDIR=/private/tmp node --env-file=.env.local --import tsx scripts/check-v3-warehouse-cache.ts",
+    "test:v3-revisit": "TMPDIR=/private/tmp node --import tsx scripts/check-v3-revisit-logic.ts",
+    "test:v3-production": "node scripts/verify-v3-production.mjs",
+    "sync:v3": "TMPDIR=/private/tmp node --env-file=.env.local --import tsx scripts/sync-v3-range.ts",
+    "db:v3:init": "TMPDIR=/private/tmp node --env-file=.env.local --import tsx scripts/init-v3-warehouse.ts",
+    "db:seed": "npx tsx prisma/seed.ts",
+    "db:migrate": "npx prisma migrate dev",
+    "db:studio": "npx prisma studio"
+  },
+  "prisma": {
+    "seed": "npx tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@auth/prisma-adapter": "^2.11.2",
+    "@libsql/client": "^0.17.4",
+    "@prisma/adapter-libsql": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "iron-session": "^8.0.4",
+    "lucide-react": "^1.21.0",
+    "next": "16.2.9",
+    "next-auth": "^4.24.14",
+    "prisma": "^7.8.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^3.6.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "better-sqlite3": "^12.11.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "tailwindcss": "^4",
+    "tsx": "^4.22.4",
+    "typescript": "^5"
+  }
+}
