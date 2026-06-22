@@ -69,8 +69,9 @@ function isFirstVisitLabel(value: unknown) {
   return null;
 }
 
-function visitCountBucket(value: unknown, fallbackCount: number) {
+function visitCountBucket(value: unknown, fallbackCount: number, hasCountVisitHistory = false) {
   const text = String(value ?? "").trim();
+  if (!text && hasCountVisitHistory) return "횟수 미상";
   if (text.includes("첫")) return "첫 방문";
   if (text.includes("2") || text.includes("3")) return "2~3회";
   if (text.includes("4") || text.includes("5")) return "4~5회";
@@ -242,14 +243,19 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
       const visitSequence = (dailyCenterVisitCounts.get(key) ?? 0) + 1;
       dailyCenterVisitCounts.set(key, visitSequence);
       dedupedVisitRows.push(row);
+      const hasCountVisitHistory = "count_visit" in row || countVisitByEvent.has(dailyCenterVisitKey);
       const countVisit = "count_visit" in row ? row.count_visit : countVisitByEvent.get(dailyCenterVisitKey);
       const isFirstByHistory = isFirstVisitLabel(countVisit);
-      if (isFirstByHistory === true || (isFirstByHistory == null && visitSequence === 1)) {
+      if (isFirstByHistory === true) {
+        firstVisitEvents += 1;
+      } else if (isFirstByHistory === false || hasCountVisitHistory) {
+        revisitVisitEvents += 1;
+      } else if (visitSequence === 1) {
         firstVisitEvents += 1;
       } else {
         revisitVisitEvents += 1;
       }
-      inc(visitCountDistribution, visitCountBucket(countVisit, visitSequence));
+      inc(visitCountDistribution, visitCountBucket(countVisit, visitSequence, hasCountVisitHistory));
       inc(dailyVisits, dateKey(row.entered_at));
       inc(centerVisits, center);
       if (!centerUnique.has(center)) centerUnique.set(center, new Set());

@@ -16,7 +16,7 @@ import { getDashboardV2ApiCache, setDashboardV2ApiCache } from "./db";
 const DEFAULT_BASE_URL = "https://api.didong.kr/api";
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_PAGES = 500;
-const MIN_REQUEST_GAP_MS = 200;
+const MIN_REQUEST_GAP_MS = 80;
 const DASHBOARD_PAGE_LIMIT = 10;
 const DEFAULT_PER_PAGE = 100;
 
