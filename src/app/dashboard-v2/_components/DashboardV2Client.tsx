@@ -642,8 +642,8 @@ export default function DashboardV2Client({ view }: { view: View }) {
               <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
                 <KpiCard title="총 방문 건수" value={formatNumber(kpis.totalVisits)} subtitle="입장 기록 기준" color="blue" />
                 <KpiCard title="고유 방문 회원" value={formatNumber(kpis.uniqueUsers)} subtitle="식별자 중복 제거" color="green" />
-                <KpiCard title="신규 방문자" value={formatNumber(kpis.newUsers)} subtitle="기간 내 1회 방문" color="purple" />
-                <KpiCard title="재방문율" value={formatPercent(kpis.revisitRate)} subtitle="2회 이상 방문" color="amber" />
+                <KpiCard title="신규 방문" value={formatNumber(kpis.newUsers)} subtitle="회원별 첫 방문" color="purple" />
+                <KpiCard title="재방문율" value={formatPercent(kpis.revisitRate)} subtitle="일일·센터 중복 제거 기준" color="amber" />
                 <KpiCard title="평균 체류시간" value={formatMinutes(kpis.avgStayMinutes)} subtitle="이상치 제외" color="gray" />
                 <KpiCard title="설문 응답률" value={formatPercent(kpis.surveyResponseRate)} subtitle="방문 대비 응답" color="blue" />
                 <KpiCard title="평균 만족도" value={`${kpis.avgSatisfaction || 0}점`} subtitle="5점 만점" color="green" />
@@ -738,14 +738,14 @@ export default function DashboardV2Client({ view }: { view: View }) {
           {(view === "visitors" || view === "members") && (
             <>
               <InsightQuote>
-                고유 방문 회원 {formatNumber(kpis.uniqueUsers)}명 중 재방문자는 {formatNumber(kpis.revisitUsers)}명이며, 고유 회원이 가장 많은 센터는 {topUniqueUserCenter?.name || "-"}입니다.
+                일일·센터 중복 제거 방문 {formatNumber(kpis.dedupedVisits || kpis.uniqueUsers)}건 중 재방문은 {formatNumber(kpis.revisitUsers)}건이며, 고유 회원이 가장 많은 센터는 {topUniqueUserCenter?.name || "-"}입니다.
               </InsightQuote>
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
                 <div className="grid grid-cols-2 gap-3 xl:col-span-2">
                   <KpiCard title="고유 방문 회원" value={formatNumber(kpis.uniqueUsers)} subtitle="식별자 중복 제거" color="green" />
-                  <KpiCard title="신규 방문자" value={formatNumber(kpis.newUsers)} subtitle="기간 내 1회 방문" color="blue" />
-                  <KpiCard title="재방문자" value={formatNumber(kpis.revisitUsers)} subtitle="2회 이상 방문" color="purple" />
-                  <KpiCard title="재방문율" value={formatPercent(kpis.revisitRate)} subtitle="고유 회원 기준" color="amber" />
+                  <KpiCard title="신규 방문" value={formatNumber(kpis.newUsers)} subtitle="회원별 첫 방문" color="blue" />
+                  <KpiCard title="재방문" value={formatNumber(kpis.revisitUsers)} subtitle="첫 방문 이후 방문" color="purple" />
+                  <KpiCard title="재방문율" value={formatPercent(kpis.revisitRate)} subtitle="일일·센터 중복 제거 기준" color="amber" />
                 </div>
                 <ChartCard title="방문횟수 분포"><BarBlock data={chartRows(data, "visitCountDistribution")} color="#f59e0b" /></ChartCard>
                 <ChartCard title="신규/재방문 비율"><PieBlock data={[{ name: "신규", value: kpis.newUsers || 0 }, { name: "재방문", value: kpis.revisitUsers || 0 }]} /></ChartCard>

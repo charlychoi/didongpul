@@ -165,7 +165,9 @@ export function makeEmptyV2Result(query: V2Query) {
 export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   const visitRows = source.visits.data.length ? source.visits.data : source.totals.data;
   const surveyRows = source.surveys.data.length ? source.surveys.data : source.totals.data;
-  const userVisitCounts = new Map<string, number>();
+  const dailyCenterVisitKeys = new Set<string>();
+  const dailyCenterVisitCounts = new Map<string, number>();
+  const dedupedVisitRows: typeof visitRows = [];
   const dailyVisits = new Map<string, number>();
   const centerVisits = new Map<string, number>();
   const centerUnique = new Map<string, Set<string>>();
@@ -192,11 +194,24 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   for (const row of visitRows) {
     const key = userKey(row);
     const center = centerName(row);
-    userVisitCounts.set(key, (userVisitCounts.get(key) ?? 0) + 1);
-    inc(dailyVisits, dateKey(row.entered_at));
-    inc(centerVisits, center);
-    if (!centerUnique.has(center)) centerUnique.set(center, new Set());
-    centerUnique.get(center)!.add(key);
+    const visitDate = dateKey(row.entered_at);
+    const dailyCenterVisitKey = `${key}|${center}|${visitDate}`;
+    if (!dailyCenterVisitKeys.has(dailyCenterVisitKey)) {
+      dailyCenterVisitKeys.add(dailyCenterVisitKey);
+      dailyCenterVisitCounts.set(key, (dailyCenterVisitCounts.get(key) ?? 0) + 1);
+      dedupedVisitRows.push(row);
+      inc(dailyVisits, visitDate);
+      inc(centerVisits, center);
+      if (!centerUnique.has(center)) centerUnique.set(center, new Set());
+      centerUnique.get(center)!.add(key);
+
+      const age = row.user?.age ?? (row as DidongTotalRow).age;
+      const gender = row.user?.gender ?? (row as DidongTotalRow).gender;
+      const location = row.user?.location ?? (row as DidongTotalRow).location;
+      inc(ageDistribution, ageBucket(age));
+      inc(genderDistribution, genderLabel(gender));
+      inc(locationDistribution, location?.trim() || "미상");
+    }
 
     const entered = parseDate(row.entered_at);
     const left = parseDate(row.leaved_at);
@@ -219,14 +234,8 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
       }
     }
 
-    const age = row.user?.age ?? (row as DidongTotalRow).age;
-    const gender = row.user?.gender ?? (row as DidongTotalRow).gender;
-    const location = row.user?.location ?? (row as DidongTotalRow).location;
     const contact = row.user?.contact ?? (row as DidongTotalRow).contact;
     if (!contact) missingContactCount += 1;
-    inc(ageDistribution, ageBucket(age));
-    inc(genderDistribution, genderLabel(gender));
-    inc(locationDistribution, location?.trim() || "미상");
 
     for (let hour = 9; hour <= 18; hour++) {
       const start = new Date(entered ?? 0);
@@ -237,7 +246,7 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     }
   }
 
-  for (const count of userVisitCounts.values()) {
+  for (const count of dailyCenterVisitCounts.values()) {
     if (count === 1) inc(visitCountDistribution, "첫 방문");
     else if (count <= 3) inc(visitCountDistribution, "2~3회");
     else if (count <= 5) inc(visitCountDistribution, "4~5회");
@@ -369,19 +378,18 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   for (const center of V2_CENTERS) {
     const row: Record<string, string | number> = { center: center.name };
     for (const age of ["40대 이하", "50대", "60대", "70대", "80대 이상", "미상"]) {
-      row[age] = visitRows.filter((item) => centerName(item) === center.name && ageBucket(item.user?.age ?? (item as DidongTotalRow).age) === age).length;
+      row[age] = dedupedVisitRows.filter((item) => centerName(item) === center.name && ageBucket(item.user?.age ?? (item as DidongTotalRow).age) === age).length;
     }
     centerAgeHeatmap.push(row);
   }
 
-  const uniqueUsers = userVisitCounts.size;
-  const revisitUsers = [...userVisitCounts.values()].filter((count) => count >= 2).length;
+  const uniqueUsers = dailyCenterVisitCounts.size;
+  const dedupedVisits = [...dailyCenterVisitCounts.values()].reduce((sum, value) => sum + value, 0);
+  const firstVisitEvents = uniqueUsers;
+  const revisitVisitEvents = Math.max(0, dedupedVisits - firstVisitEvents);
   const shortStayCount = stayValues.filter((value) => value <= 30).length;
   const longStay2hCount = stayValues.filter((value) => value >= 120).length;
-  const exactCenterVisitTotals = source.visits.centerTotals;
-  const totalVisits = exactCenterVisitTotals
-    ? Object.values(exactCenterVisitTotals).reduce((sum, value) => sum + value, 0)
-    : visitRows.length;
+  const totalVisits = dedupedVisits;
   const surveyResponses = source.surveys.total || surveyRows.length;
   const satisfactionAverage = avg(surveyScores.total);
   const programRows = source.waitings.total || source.waitings.data.length;
@@ -424,7 +432,7 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   const centers = V2_CENTERS.map((center) => {
     const name = center.name;
     const centerSurvey = centerSurveys.get(name);
-    const visits = exactCenterVisitTotals?.[name] ?? centerVisits.get(name) ?? 0;
+    const visits = centerVisits.get(name) ?? 0;
     return {
       center: name,
       visits,
@@ -507,9 +515,10 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     kpis: {
       totalVisits,
       uniqueUsers,
-      newUsers: Math.max(0, uniqueUsers - revisitUsers),
-      revisitUsers,
-      revisitRate: percent(revisitUsers, uniqueUsers),
+      dedupedVisits,
+      newUsers: firstVisitEvents,
+      revisitUsers: revisitVisitEvents,
+      revisitRate: percent(revisitVisitEvents, dedupedVisits),
       avgStayMinutes: Math.round(avg(stayValues) ?? 0),
       shortStayCount,
       shortStayRate: percent(shortStayCount, stayValues.length),
