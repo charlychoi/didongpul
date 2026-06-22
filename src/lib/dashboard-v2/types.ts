@@ -142,6 +142,7 @@ export interface ApiCollection<T> {
 
 export interface V2SourceBundle {
   totals: ApiCollection<DidongTotalRow>;
+  cumulativeTotals?: ApiCollection<DidongTotalRow>;
   visits: ApiCollection<DidongVisitRow>;
   waitings: ApiCollection<DidongWaitingRow>;
   surveys: ApiCollection<DidongSurveyRow>;

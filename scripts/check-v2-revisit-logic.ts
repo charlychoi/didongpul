@@ -1,59 +1,74 @@
 import { buildDashboardV2 } from "../src/lib/dashboard-v2/aggregator";
 import type { V2SourceBundle } from "../src/lib/dashboard-v2/types";
 
+const monthlyTotals = [
+  {
+    center_type: 2,
+    name: "테스트1",
+    contact: "010-0000-0001",
+    entered_at: "2026-06-01 10:00:00",
+    leaved_at: "2026-06-01 11:00:00",
+    count_visit: "5회 이상",
+  },
+  {
+    center_type: 2,
+    name: "테스트1",
+    contact: "010-0000-0001",
+    entered_at: "2026-06-01 14:00:00",
+    leaved_at: "2026-06-01 15:00:00",
+    count_visit: "5회 이상",
+  },
+  {
+    center_type: 2,
+    name: "테스트1",
+    contact: "010-0000-0001",
+    entered_at: "2026-06-02 10:00:00",
+    leaved_at: "2026-06-02 11:00:00",
+    count_visit: "5회 이상",
+  },
+  {
+    center_type: 3,
+    name: "테스트1",
+    contact: "010-0000-0001",
+    entered_at: "2026-06-02 13:00:00",
+    leaved_at: "2026-06-02 14:00:00",
+    count_visit: "5회 이상",
+  },
+  {
+    center_type: 2,
+    name: "테스트2",
+    contact: "010-0000-0002",
+    entered_at: "2026-06-01 10:00:00",
+    leaved_at: "2026-06-01 11:00:00",
+    count_visit: "첫 방문",
+  },
+  {
+    center_type: 2,
+    name: "테스트3",
+    contact: "010-0000-0003",
+    entered_at: "2026-06-01 12:00:00",
+    leaved_at: "2026-06-01 13:00:00",
+    count_visit: "",
+  },
+];
+
+const historicalTotals = Array.from({ length: 15 }, (_, index) => ({
+  center_type: index < 11 ? 2 : 3,
+  name: `이전방문${index + 1}`,
+  contact: `010-9000-${String(index + 1).padStart(4, "0")}`,
+  entered_at: `2026-05-${String(index + 1).padStart(2, "0")} 10:00:00`,
+  leaved_at: `2026-05-${String(index + 1).padStart(2, "0")} 11:00:00`,
+  count_visit: "5회 이상",
+}));
+
 const source: V2SourceBundle = {
   totals: {
     total: 6,
-    data: [
-      {
-        center_type: 2,
-        name: "테스트1",
-        contact: "010-0000-0001",
-        entered_at: "2026-06-01 10:00:00",
-        leaved_at: "2026-06-01 11:00:00",
-        count_visit: "5회 이상",
-      },
-      {
-        center_type: 2,
-        name: "테스트1",
-        contact: "010-0000-0001",
-        entered_at: "2026-06-01 14:00:00",
-        leaved_at: "2026-06-01 15:00:00",
-        count_visit: "5회 이상",
-      },
-      {
-        center_type: 2,
-        name: "테스트1",
-        contact: "010-0000-0001",
-        entered_at: "2026-06-02 10:00:00",
-        leaved_at: "2026-06-02 11:00:00",
-        count_visit: "5회 이상",
-      },
-      {
-        center_type: 3,
-        name: "테스트1",
-        contact: "010-0000-0001",
-        entered_at: "2026-06-02 13:00:00",
-        leaved_at: "2026-06-02 14:00:00",
-        count_visit: "5회 이상",
-      },
-      {
-        center_type: 2,
-        name: "테스트2",
-        contact: "010-0000-0002",
-        entered_at: "2026-06-01 10:00:00",
-        leaved_at: "2026-06-01 11:00:00",
-        count_visit: "첫 방문",
-      },
-      {
-        center_type: 2,
-        name: "테스트3",
-        contact: "010-0000-0003",
-        entered_at: "2026-06-01 12:00:00",
-        leaved_at: "2026-06-01 13:00:00",
-        count_visit: "",
-      },
-    ],
+    data: monthlyTotals,
+  },
+  cumulativeTotals: {
+    total: 21,
+    data: [...monthlyTotals, ...historicalTotals],
   },
   visits: {
     total: 6,
@@ -128,8 +143,8 @@ function assertEqual(actual: unknown, expected: unknown, label: string) {
 assertEqual(result.kpis.uniqueUsers, 3, "uniqueUsers");
 assertEqual(result.kpis.totalVisits, 5, "totalVisits");
 assertEqual(result.kpis.dedupedVisits, 5, "dedupedVisits");
-assertEqual(result.kpis.newUsers, 1, "newUsers");
-assertEqual(result.kpis.revisitUsers, 4, "revisitUsers");
+assertEqual(result.kpis.newUsers, 3, "newUsers");
+assertEqual(result.kpis.revisitUsers, 16, "revisitUsers");
 assertEqual(result.kpis.revisitRate, 80, "revisitRate");
 assertEqual(
   result.charts.visitCountDistribution.some((item) => item.name === "횟수 미상" && item.value === 1),

@@ -6,7 +6,7 @@ import { getDashboardV2ApiCache, getDashboardV2DatabaseStatus, setDashboardV2Api
 import { ApiCollection, V2_CENTERS, V2CenterFilter, V2Query } from "./types";
 
 const DASHBOARD_RESPONSE_TTL_MS = 30 * 60 * 1000;
-const DASHBOARD_RESPONSE_CACHE_VERSION = 8;
+const DASHBOARD_RESPONSE_CACHE_VERSION = 11;
 type DashboardV2Result = ReturnType<typeof buildDashboardV2>;
 const pendingDashboardResponses = new Map<string, Promise<DashboardV2Result>>();
 

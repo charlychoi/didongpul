@@ -31,6 +31,8 @@ function parseDate(value?: string | null) {
 }
 
 function dateKey(value?: string | null) {
+  const datePart = value?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  if (datePart) return datePart;
   const date = parseDate(value);
   return date ? date.toISOString().slice(0, 10) : "미상";
 }
@@ -39,22 +41,37 @@ function centerName(row: { center_type?: string | number | null; format_center_t
   return row.format_center_type || CENTER_NAME_BY_CODE.get(String(row.center_type)) || "미상";
 }
 
+function selectedOfficialCenters(center: V2Query["center"]) {
+  if (center === "ALL") return V2_CENTERS;
+  return V2_CENTERS.filter((item) => item.code === center);
+}
+
 function userKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
   const user = row.user;
   const contact = "contact" in row ? row.contact : null;
   const name = "name" in row ? row.name : null;
+  const normalizedName = String(user?.name ?? name ?? "").replace(/\s+/g, "").trim();
+  const normalizedContact = String(user?.contact ?? contact ?? "").replace(/\D/g, "");
+  if (normalizedName && normalizedContact) return `${normalizedName}${normalizedContact}`;
+  if (normalizedContact) return normalizedContact;
   return (
-    user?.contact ||
-    contact ||
     user?.id?.toString() ||
     user?.uuid ||
-    [name, row.entered_at, row.center_type].filter(Boolean).join("|") ||
+    [normalizedName, row.entered_at, row.center_type].filter(Boolean).join("|") ||
     "unknown"
   );
 }
 
 function visitEventKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
   return `${userKey(row)}|${centerName(row)}|${dateKey(row.entered_at)}`;
+}
+
+function monthKey(value?: string | null) {
+  return dateKey(value).slice(0, 7);
+}
+
+function monthVisitorKey(row: DidongTotalRow | DidongVisitRow | DidongSurveyRow) {
+  return userKey(row);
 }
 
 function isFirstVisitLabel(value: unknown) {
@@ -185,6 +202,7 @@ function previousRange(query: V2Query) {
 export function makeEmptyV2Result(query: V2Query) {
   return buildDashboardV2(query, {
     totals: { data: [], total: 0 },
+    cumulativeTotals: { data: [], total: 0 },
     visits: { data: [], total: 0 },
     waitings: { data: [], total: 0 },
     surveys: { data: [], total: 0 },
@@ -197,6 +215,7 @@ export function makeEmptyV2Result(query: V2Query) {
 
 export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   const visitRows = source.visits.data.length ? source.visits.data : source.totals.data;
+  const cumulativeRows = source.cumulativeTotals?.data.length ? source.cumulativeTotals.data : source.totals.data;
   const surveyRows = source.surveys.data.length ? source.surveys.data : source.totals.data;
   const countVisitByEvent = new Map<string, unknown>();
   for (const row of source.totals.data) {
@@ -212,6 +231,9 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   const dailyVisits = new Map<string, number>();
   const centerVisits = new Map<string, number>();
   const centerUnique = new Map<string, Set<string>>();
+  const centerMonthlyUnique = new Map<string, Set<string>>();
+  const centerMonthlyUniqueCount = new Map<string, number>();
+  const centerCumulativeDailyVisits = new Map<string, number>();
   const centerStayValues = new Map<string, number[]>();
   const centerSurveys = new Map<string, { visits: number; surveys: number; satisfaction: number[]; revisit: number; responses: number }>();
   const hourlyEntries = new Map<string, number>();
@@ -233,6 +255,32 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
   let firstVisitEvents = 0;
   let revisitVisitEvents = 0;
   const stayValues: number[] = [];
+  const selectedMonth = monthKey(query.startDate);
+  const cumulativeDailyKeys = new Set<string>();
+  const monthlyUniqueKeys = new Set<string>();
+
+  for (const row of cumulativeRows) {
+    const center = centerName(row);
+    const dailyKey = visitEventKey(row);
+    if (!cumulativeDailyKeys.has(dailyKey)) {
+      cumulativeDailyKeys.add(dailyKey);
+      inc(centerCumulativeDailyVisits, center);
+    }
+  }
+
+  for (const row of source.totals.data) {
+    const center = centerName(row);
+    if (monthKey(row.entered_at) === selectedMonth) {
+      const monthlyKey = monthVisitorKey(row);
+      monthlyUniqueKeys.add(monthlyKey);
+      if (!centerMonthlyUnique.has(center)) centerMonthlyUnique.set(center, new Set());
+      centerMonthlyUnique.get(center)!.add(monthlyKey);
+    }
+  }
+
+  for (const center of V2_CENTERS) {
+    centerMonthlyUniqueCount.set(center.name, centerMonthlyUnique.get(center.name)?.size ?? 0);
+  }
 
   for (const row of visitRows) {
     const key = userKey(row);
@@ -431,8 +479,36 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     centerAgeHeatmap.push(row);
   }
 
-  const uniqueUsers = dailyCenterVisitCounts.size;
-  const dedupedVisits = [...dailyCenterVisitCounts.values()].reduce((sum, value) => sum + value, 0);
+  const uniqueUsers = monthlyUniqueKeys.size || dailyCenterVisitCounts.size;
+  const dedupedVisits = dailyCenterVisitKeys.size;
+  const sampledCumulativeVisitCount = [...centerCumulativeDailyVisits.values()].reduce((sum, value) => sum + value, 0);
+  const cumulativeVisitCount = source.cumulativeTotals?.truncated
+    ? Math.max(source.cumulativeTotals.total, sampledCumulativeVisitCount, dedupedVisits)
+    : sampledCumulativeVisitCount || source.cumulativeTotals?.total || dedupedVisits;
+  const monthlyUniqueUserCount = monthlyUniqueKeys.size || uniqueUsers;
+  const officialCenterStats = selectedOfficialCenters(query.center).map((center) => {
+    const monthlyUniqueUsers = centerMonthlyUniqueCount.get(center.name) ?? centerUnique.get(center.name)?.size ?? 0;
+    const cumulativeVisits =
+      source.cumulativeTotals?.centerTotals?.[center.name] ??
+      centerCumulativeDailyVisits.get(center.name) ??
+      centerVisits.get(center.name) ??
+      0;
+    const revisitUsers = Math.max(0, cumulativeVisits - monthlyUniqueUsers);
+    return {
+      center: center.name,
+      monthlyUniqueUsers,
+      cumulativeVisits,
+      revisitUsers,
+      revisitRate: percent(revisitUsers, cumulativeVisits),
+    };
+  });
+  const standardRevisitUsers = officialCenterStats.reduce((sum, item) => sum + item.revisitUsers, 0);
+  const officialRateValues = officialCenterStats
+    .filter((item) => item.cumulativeVisits > 0)
+    .map((item) => item.revisitRate);
+  const standardRevisitRate = officialRateValues.length
+    ? Math.round((officialRateValues.reduce((sum, value) => sum + value, 0) / officialRateValues.length) * 10) / 10
+    : percent(standardRevisitUsers, cumulativeVisitCount);
   const shortStayCount = stayValues.filter((value) => value <= 30).length;
   const longStay2hCount = stayValues.filter((value) => value >= 120).length;
   const totalVisits = dedupedVisits;
@@ -479,10 +555,14 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     const name = center.name;
     const centerSurvey = centerSurveys.get(name);
     const visits = centerVisits.get(name) ?? 0;
+    const monthlyUniqueUsers = centerMonthlyUniqueCount.get(name) ?? centerUnique.get(name)?.size ?? 0;
+    const cumulativeVisits = source.cumulativeTotals?.centerTotals?.[name] ?? centerCumulativeDailyVisits.get(name) ?? visits;
     return {
       center: name,
       visits,
-      uniqueUsers: centerUnique.get(name)?.size ?? 0,
+      uniqueUsers: monthlyUniqueUsers,
+      cumulativeVisits,
+      standardRevisitRate: percent(Math.max(0, cumulativeVisits - monthlyUniqueUsers), cumulativeVisits),
       avgStayMinutes: Math.round(avg(centerStayValues.get(name) ?? []) ?? 0),
       surveyResponseRate: percent(centerSurvey?.surveys ?? 0, visits),
       satisfaction: Math.round((avg(centerSurvey?.satisfaction ?? []) ?? 0) * 10) / 10,
@@ -560,11 +640,12 @@ export function buildDashboardV2(query: V2Query, source: V2SourceBundle) {
     },
     kpis: {
       totalVisits,
-      uniqueUsers,
+      uniqueUsers: monthlyUniqueUserCount,
       dedupedVisits,
-      newUsers: firstVisitEvents,
-      revisitUsers: revisitVisitEvents,
-      revisitRate: percent(revisitVisitEvents, dedupedVisits),
+      newUsers: monthlyUniqueUserCount,
+      revisitUsers: standardRevisitUsers,
+      revisitRate: standardRevisitRate,
+      cumulativeVisits: cumulativeVisitCount,
       avgStayMinutes: Math.round(avg(stayValues) ?? 0),
       shortStayCount,
       shortStayRate: percent(shortStayCount, stayValues.length),

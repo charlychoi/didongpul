@@ -6,8 +6,9 @@ export const maxDuration = 300;
 export async function GET(request: NextRequest) {
   const result = await getDashboardV2(request, {
     totals: true,
+    cumulativeTotals: true,
     exactTotals: false,
-    pageLimit: 500,
+    pageLimit: 30,
   });
   if (result.error) return result.error;
   return Response.json(

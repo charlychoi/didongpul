@@ -28,6 +28,7 @@ let requestQueue = Promise.resolve();
 
 export interface DashboardV2SourceOptions {
   totals?: boolean;
+  cumulativeTotals?: boolean;
   visits?: boolean;
   waitings?: boolean;
   surveys?: boolean;
@@ -35,6 +36,7 @@ export interface DashboardV2SourceOptions {
   websiteVisitors?: boolean;
   websiteStats?: boolean;
   pageLimit?: number;
+  cumulativePageLimit?: number;
   exactTotals?: boolean;
 }
 
@@ -67,6 +69,14 @@ function parseDate(value?: string | null) {
 
 function dateOnly(date: Date) {
   return date.toISOString().slice(0, 10);
+}
+
+function dateOnlyFromValue(value?: string | null) {
+  if (!value) return null;
+  const datePart = value.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  if (datePart) return datePart;
+  const parsed = parseDate(value);
+  return parsed ? dateOnly(parsed) : null;
 }
 
 function monthStart(value: string) {
@@ -111,8 +121,7 @@ function rowDate(row: unknown) {
     item.updated_at ??
     item.date;
   if (typeof value !== "string") return null;
-  const parsed = parseDate(value);
-  return parsed ? dateOnly(parsed) : null;
+  return dateOnlyFromValue(value);
 }
 
 function filterRowsByDate<T>(rows: T[], query: V2Query) {
@@ -152,12 +161,14 @@ function mergeCollections<T>(collections: ApiCollection<T>[], query: V2Query): A
     }
     return acc;
   }, {});
+  const truncated = collections.some((collection) => collection.truncated);
+  const sourceTotal = collections.reduce((sum, collection) => sum + (collection.total ?? collection.data.length), 0);
   return {
     data,
-    total: data.length,
+    total: truncated ? sourceTotal : data.length,
     centerTotals: Object.keys(centerTotals).length ? centerTotals : undefined,
     meta: collections.at(-1)?.meta,
-    truncated: collections.some((collection) => collection.truncated),
+    truncated,
     error: errors.join("\n") || undefined,
   };
 }
@@ -386,6 +397,35 @@ async function fetchByCenter<T>(
   return merged;
 }
 
+async function fetchByCenterSingleWindow<T>(
+  path: string,
+  query: V2Query,
+  extra?: Record<string, string | number | undefined>,
+  pageLimit = DASHBOARD_PAGE_LIMIT
+) {
+  const chunks = [];
+  const centerTotals: Record<string, number> = {};
+  for (const center of selectedCenters(query.center)) {
+    const chunk = await safeFetch<T>(
+      path,
+      {
+        center_type: center.code,
+        started_at: query.startDate,
+        finished_at: query.endDate,
+        ...extra,
+      },
+      query.bypassCache,
+      pageLimit
+    );
+    centerTotals[center.name] = chunk.total;
+    chunks.push(withCenter(chunk, center));
+  }
+  const merged = mergeCollections(chunks, query);
+  merged.centerTotals = centerTotals;
+  merged.total = Object.values(centerTotals).reduce((sum, value) => sum + value, 0);
+  return merged;
+}
+
 async function fetchByMonth<T>(
   path: string,
   query: V2Query,
@@ -417,9 +457,15 @@ export async function fetchDashboardV2Sources(
   }
 ) {
   const pageLimit = options.pageLimit ?? DASHBOARD_PAGE_LIMIT;
+  const cumulativePageLimit = options.cumulativePageLimit ?? Number(process.env.V2_CUMULATIVE_PAGE_LIMIT || 1);
   const exactTotals = options.exactTotals !== false;
+  const cumulativeQuery: V2Query = {
+    ...query,
+    startDate: process.env.V2_CUMULATIVE_START_DATE || "2025-01-01",
+  };
   const [
     totals,
+    cumulativeTotals,
     visits,
     waitings,
     surveys,
@@ -429,6 +475,9 @@ export async function fetchDashboardV2Sources(
   ] = await Promise.all([
     options.totals
       ? fetchByCenter<DidongTotalRow>("/external/total", query, undefined, pageLimit, exactTotals)
+      : Promise.resolve(emptyCollection<DidongTotalRow>()),
+    options.cumulativeTotals
+      ? fetchByCenterSingleWindow<DidongTotalRow>("/external/total", cumulativeQuery, undefined, cumulativePageLimit)
       : Promise.resolve(emptyCollection<DidongTotalRow>()),
     options.visits
       ? fetchByCenter<DidongVisitRow>("/external/visits", query, undefined, pageLimit, exactTotals)
@@ -462,6 +511,7 @@ export async function fetchDashboardV2Sources(
 
   return {
     totals,
+    cumulativeTotals,
     visits,
     waitings,
     surveys,
