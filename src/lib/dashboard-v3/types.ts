@@ -1,7 +1,7 @@
 export const V3_CENTERS = [
-  { code: 2, name: "강동센터", color: "#2563eb" },
-  { code: 3, name: "도봉센터", color: "#16a34a" },
-  { code: 4, name: "동대문센터", color: "#f59e0b" },
+  { code: 2, name: "강동센터", color: "#2563eb", cumulativeStartDate: "2025-11-01" },
+  { code: 3, name: "도봉센터", color: "#16a34a", cumulativeStartDate: "2025-12-01" },
+  { code: 4, name: "동대문센터", color: "#f59e0b", cumulativeStartDate: "2026-02-01" },
 ] as const;
 
 export type V3CenterCode = (typeof V3_CENTERS)[number]["code"];

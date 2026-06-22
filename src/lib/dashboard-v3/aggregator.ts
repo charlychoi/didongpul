@@ -12,6 +12,9 @@ import {
 } from "./types";
 
 const CENTER_NAME_BY_CODE = new Map(V3_CENTERS.map((center) => [String(center.code), center.name]));
+const CUMULATIVE_START_BY_CENTER_NAME = new Map<string, string>(
+  V3_CENTERS.map((center) => [center.name, center.cumulativeStartDate])
+);
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 function asNumber(value: unknown) {
@@ -31,6 +34,8 @@ function parseDate(value?: string | null) {
 }
 
 function dateKey(value?: string | null) {
+  const datePart = value?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  if (datePart) return datePart;
   const date = parseDate(value);
   return date ? date.toISOString().slice(0, 10) : "미상";
 }
@@ -429,12 +434,15 @@ export function buildDashboardV3(query: V3Query, source: V3SourceBundle) {
   const monthlyUniqueKeys = new Set<string>();
   for (const row of cumulativeRows) {
     const center = centerName(row);
+    const occurredDate = dateKey(row.entered_at);
+    const cumulativeStartDate = CUMULATIVE_START_BY_CENTER_NAME.get(center);
+    if (cumulativeStartDate && occurredDate < cumulativeStartDate) continue;
     const dailyKey = visitEventKey(row);
     if (!cumulativeDailyKeys.has(dailyKey)) {
       cumulativeDailyKeys.add(dailyKey);
       inc(centerCumulativeDailyVisits, center);
     }
-    if (monthKey(dateKey(row.entered_at)) === selectedMonth) {
+    if (monthKey(occurredDate) === selectedMonth) {
       monthlyUniqueKeys.add(monthVisitorKey(row));
       if (!centerMonthlyUnique.has(center)) centerMonthlyUnique.set(center, new Set());
       centerMonthlyUnique.get(center)!.add(monthVisitorKey(row));

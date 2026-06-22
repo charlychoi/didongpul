@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { after, NextRequest } from "next/server";
 import { getSession } from "@/lib/session";
 import { buildDashboardV3 } from "./aggregator";
 import { DashboardV3SourceOptions } from "./api-client";
@@ -7,7 +7,7 @@ import { ApiCollection, V3_CENTERS, V3CenterFilter, V3Query } from "./types";
 import { getOrSyncDashboardV3Source } from "./warehouse";
 
 const DASHBOARD_RESPONSE_TTL_MS = 30 * 60 * 1000;
-const DASHBOARD_RESPONSE_CACHE_VERSION = 9;
+const DASHBOARD_RESPONSE_CACHE_VERSION = 11;
 type DashboardV3Result = ReturnType<typeof buildDashboardV3>;
 const pendingDashboardResponses = new Map<string, Promise<DashboardV3Result>>();
 
@@ -57,7 +57,9 @@ export async function getDashboardV3(
 
     try {
       const cached = await getDashboardV3ApiCache(responseCacheKey);
-      if (cached) return { data: cached.value as DashboardV3Result };
+      if (cached && !(cached.value as { sync?: { dbWritePending?: boolean } }).sync?.dbWritePending) {
+        return { data: cached.value as DashboardV3Result };
+      }
     } catch (error) {
       console.warn("dashboard v3 response cache read failed", error);
     }
@@ -65,6 +67,21 @@ export async function getDashboardV3(
 
   const responsePromise = (async () => {
     const warehouseResult = await getOrSyncDashboardV3Source(query, sourceOptions);
+    if (warehouseResult.backgroundStore) {
+      after(async () => {
+        try {
+          const result = await warehouseResult.backgroundStore?.();
+          console.log("dashboard v3 background warehouse store completed", {
+            startDate: query.startDate,
+            endDate: query.endDate,
+            center: query.center,
+            upserted: result?.upserted ?? 0,
+          });
+        } catch (error) {
+          console.warn("dashboard v3 background warehouse store failed", error);
+        }
+      });
+    }
     const source = warehouseResult.source;
     const requestedSources: Array<ApiCollection<unknown>> = [];
     const wants = sourceOptions ?? {
@@ -94,15 +111,29 @@ export async function getDashboardV3(
     data.sync.source =
       warehouseResult.storage === "db"
         ? "dashboard v3 Turso/libSQL warehouse"
-        : warehouseResult.storage === "api_then_db"
-          ? "didong external API -> dashboard v3 warehouse"
-          : "didong external API";
-    data.sync.partial = data.sync.partial || warehouseResult.storage === "api_only";
+        : warehouseResult.storage === "db_partial"
+          ? "dashboard v3 Turso/libSQL warehouse (sync needed)"
+          : warehouseResult.storage === "api_pending_db"
+            ? "didong external API (v3 DB 저장 중)"
+            : "didong external API";
+    data.sync.partial = data.sync.partial || warehouseResult.storage !== "db";
+    const sync = data.sync as typeof data.sync & {
+      storage?: string;
+      dbWritePending?: boolean;
+      rowsFetched?: number;
+      rowsUpserted?: number;
+    };
+    sync.storage = warehouseResult.storage;
+    sync.dbWritePending = warehouseResult.storage === "api_pending_db";
+    sync.rowsFetched = warehouseResult.fetched;
+    sync.rowsUpserted = warehouseResult.upserted;
     try {
-      await setDashboardV3ApiCache(responseCacheKey, {
-        expiresAt: Date.now() + DASHBOARD_RESPONSE_TTL_MS,
-        value: data,
-      });
+      if (warehouseResult.storage !== "api_pending_db") {
+        await setDashboardV3ApiCache(responseCacheKey, {
+          expiresAt: Date.now() + DASHBOARD_RESPONSE_TTL_MS,
+          value: data,
+        });
+      }
     } catch (error) {
       console.warn("dashboard v3 response cache write failed", error);
     }

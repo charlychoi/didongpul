@@ -69,6 +69,14 @@ function dateOnly(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function dateOnlyFromValue(value?: string | null) {
+  if (!value) return null;
+  const datePart = value.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  if (datePart) return datePart;
+  const parsed = parseDate(value);
+  return parsed ? dateOnly(parsed) : null;
+}
+
 function monthStart(value: string) {
   const [year, month] = value.split("-").map(Number);
   return `${year}-${String(month).padStart(2, "0")}-01`;
@@ -111,8 +119,7 @@ function rowDate(row: unknown) {
     item.updated_at ??
     item.date;
   if (typeof value !== "string") return null;
-  const parsed = parseDate(value);
-  return parsed ? dateOnly(parsed) : null;
+  return dateOnlyFromValue(value);
 }
 
 function filterRowsByDate<T>(rows: T[], query: V3Query) {
@@ -245,11 +252,20 @@ export async function didongGet<T>(
   const url = `${getBaseUrl()}${path}${qs ? `?${qs}` : ""}`;
 
   for (let attempt = 0; attempt < 4; attempt++) {
-    await waitForRequestSlot();
-    const response = await fetchWithTimeout(url, {
-      headers: { "X-API-KEY": getApiKey(), Accept: "application/json" },
-      cache: "no-store",
-    });
+    let response: Response;
+    try {
+      await waitForRequestSlot();
+      response = await fetchWithTimeout(url, {
+        headers: { "X-API-KEY": getApiKey(), Accept: "application/json" },
+        cache: "no-store",
+      });
+    } catch (error) {
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 3_000 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
 
     if (response.status === 429 && attempt < 3) {
       await new Promise((resolve) => setTimeout(resolve, 3_000 * (attempt + 1)));

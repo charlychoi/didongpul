@@ -16,7 +16,15 @@ import {
 
 type RawRow = DidongTotalRow | DidongVisitRow | DidongSurveyRow | DidongWaitingRow | DidongCouponRow;
 type SourceType = "total" | "visit" | "survey" | "coupon" | "waiting";
-const CUMULATIVE_START_DATE = process.env.V3_CUMULATIVE_START_DATE || "2025-01-01";
+type WarehouseStorage = "db" | "db_partial" | "api_only" | "api_pending_db";
+
+type WarehouseResult = {
+  source: V3SourceBundle;
+  storage: WarehouseStorage;
+  fetched: number;
+  upserted: number;
+  backgroundStore?: () => Promise<{ upserted: number }>;
+};
 
 type SyncOptions = {
   startDate: string;
@@ -37,6 +45,8 @@ const SOURCE_PATHS: Record<SourceType, string> = {
 
 function parseDateOnly(value?: string | null) {
   if (!value) return null;
+  const datePart = value.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  if (datePart) return datePart;
   const date = new Date(value.includes("T") ? value : value.replace(" ", "T"));
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
@@ -69,6 +79,11 @@ function centerName(row: RawRow) {
 
 function selectedCenters(center: V3CenterFilter) {
   return center === "ALL" ? V3_CENTERS : V3_CENTERS.filter((item) => item.code === center);
+}
+
+function cumulativeStartDateForQuery(center: V3CenterFilter) {
+  const starts = selectedCenters(center).map((item) => item.cumulativeStartDate);
+  return starts.sort()[0] || "2025-11-01";
 }
 
 async function fetchSyncRows<T extends RawRow>(sourceType: SourceType, query: V3Query) {
@@ -339,6 +354,12 @@ function requestedSourceTypes(options?: DashboardV3SourceOptions): SourceType[] 
 
 async function hasExactCoverage(client: Client, query: V3Query, sourceTypes: SourceType[]) {
   if (sourceTypes.length === 0) return true;
+  const covered = await coveredSourceTypes(client, query, sourceTypes);
+  return covered.size === sourceTypes.length;
+}
+
+async function coveredSourceTypes(client: Client, query: V3Query, sourceTypes: SourceType[]) {
+  if (sourceTypes.length === 0) return new Set<string>();
   const placeholders = sourceTypes.map(() => "?").join(", ");
   const result = await client.execute({
     sql: `
@@ -351,7 +372,7 @@ async function hasExactCoverage(client: Client, query: V3Query, sourceTypes: Sou
     `,
     args: [query.startDate, query.endDate, String(query.center), ...sourceTypes],
   });
-  return new Set(result.rows.map((row) => String(row.source_type))).size === sourceTypes.length;
+  return new Set(result.rows.map((row) => String(row.source_type)));
 }
 
 async function readRawRows<T extends RawRow>(client: Client, sourceType: SourceType, query: V3Query) {
@@ -395,10 +416,76 @@ async function readWarehouseSource(client: Client, query: V3Query): Promise<V3So
   };
 }
 
+function emptySourceBundle(): V3SourceBundle {
+  return {
+    totals: { data: [], total: 0 },
+    cumulativeTotals: { data: [], total: 0 },
+    visits: { data: [], total: 0 },
+    surveys: { data: [], total: 0 },
+    coupons: { data: [], total: 0 },
+    waitings: { data: [], total: 0 },
+    websiteVisitors: { data: [], total: 0 },
+    websiteStats: { data: [], total: 0 },
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+function collectionForSource(source: V3SourceBundle, sourceType: SourceType) {
+  if (sourceType === "total") return source.totals;
+  if (sourceType === "visit") return source.visits;
+  if (sourceType === "survey") return source.surveys;
+  if (sourceType === "coupon") return source.coupons;
+  return source.waitings;
+}
+
+async function fetchApiSource(query: V3Query, sourceTypes: SourceType[]) {
+  const source = emptySourceBundle();
+  let fetched = 0;
+
+  for (const sourceType of sourceTypes) {
+    const collection = await fetchSyncRows(sourceType, query);
+    fetched += collection.data.length;
+
+    if (sourceType === "total") source.totals = collection as V3SourceBundle["totals"];
+    if (sourceType === "visit") source.visits = collection as V3SourceBundle["visits"];
+    if (sourceType === "survey") source.surveys = collection as V3SourceBundle["surveys"];
+    if (sourceType === "coupon") source.coupons = collection as V3SourceBundle["coupons"];
+    if (sourceType === "waiting") source.waitings = collection as V3SourceBundle["waitings"];
+  }
+
+  source.fetchedAt = new Date().toISOString();
+  return { source, fetched };
+}
+
+async function storeApiSource(
+  client: Client,
+  query: V3Query,
+  sourceTypes: SourceType[],
+  source: V3SourceBundle
+) {
+  let upserted = 0;
+  for (const sourceType of sourceTypes) {
+    const collection = collectionForSource(source, sourceType);
+    if (collection.error) continue;
+    const rows = collection.data as RawRow[];
+    const sourceUpserted = await upsertRawRows(client, sourceType, rows);
+    await upsertSourceCoverage(client, sourceType, query, rows.length, sourceUpserted);
+    upserted += sourceUpserted;
+  }
+
+  if (sourceTypes.includes("total")) {
+    const storedSource = await readWarehouseSource(client, query);
+    storedSource.cumulativeTotals = await readCumulativeTotals(client, query);
+    await writeSummaries(client, query, storedSource);
+  }
+
+  return { upserted };
+}
+
 async function readCumulativeTotals(client: Client, query: V3Query) {
   const cumulativeQuery: V3Query = {
     ...query,
-    startDate: CUMULATIVE_START_DATE,
+    startDate: cumulativeStartDateForQuery(query.center),
     endDate: query.endDate,
   };
   const rows = await readRawRows<DidongTotalRow>(client, "total", cumulativeQuery);
@@ -408,11 +495,14 @@ async function readCumulativeTotals(client: Client, query: V3Query) {
 async function ensureCumulativeTotals(client: Client, query: V3Query) {
   const cumulativeQuery: V3Query = {
     ...query,
-    startDate: CUMULATIVE_START_DATE,
+    startDate: cumulativeStartDateForQuery(query.center),
     endDate: query.endDate,
   };
   const hasCoverage = !query.bypassCache && (await hasExactCoverage(client, cumulativeQuery, ["total"]));
-  if (!hasCoverage && process.env.V3_ENABLE_CUMULATIVE_SYNC !== "0") {
+
+  // 화면 조회에서 2025년부터의 대량 누적 API를 즉시 호출하면 응답 지연/타임아웃이 발생한다.
+  // 누적 데이터는 별도 sync로 쌓고, 대시보드는 현재 DB에 쌓인 누적분을 우선 활용한다.
+  if (!hasCoverage && process.env.V3_ENABLE_CUMULATIVE_SYNC === "1") {
     await fetchAndStoreSourceType(client, "total", cumulativeQuery);
   }
   return readCumulativeTotals(client, query);
@@ -429,42 +519,32 @@ async function fetchAndStoreSourceType(client: Client, sourceType: SourceType, q
 export async function getOrSyncDashboardV3Source(
   query: V3Query,
   options?: DashboardV3SourceOptions
-): Promise<{ source: V3SourceBundle; storage: "db" | "api_then_db" | "api_only"; fetched: number; upserted: number }> {
+): Promise<WarehouseResult> {
+  const sourceTypes = requestedSourceTypes(options);
   const client = await ensureDashboardV3Warehouse().catch(() => null);
   if (!client) {
-    const totals = options?.totals ? await fetchSyncRows<DidongTotalRow>("total", query) : { data: [], total: 0 };
+    const { source, fetched } = await fetchApiSource(query, sourceTypes);
     return {
-      source: {
-        totals,
-        cumulativeTotals: { data: [], total: 0 },
-        visits: { data: [], total: 0 },
-        surveys: { data: [], total: 0 },
-        coupons: { data: [], total: 0 },
-        waitings: { data: [], total: 0 },
-        websiteVisitors: { data: [], total: 0 },
-        websiteStats: { data: [], total: 0 },
-        fetchedAt: new Date().toISOString(),
-      },
+      source,
       storage: "api_only",
-      fetched: totals.data.length,
+      fetched,
       upserted: 0,
     };
   }
 
-  const sourceTypes = requestedSourceTypes(options);
-  const hasCoverage = !query.bypassCache && (await hasExactCoverage(client, query, sourceTypes));
-  if (hasCoverage) {
-    const source = await readWarehouseSource(client, query);
-    if (sourceTypes.includes("total")) source.cumulativeTotals = await ensureCumulativeTotals(client, query);
-    return { source, storage: "db", fetched: 0, upserted: 0 };
-  }
+  const covered = !query.bypassCache ? await coveredSourceTypes(client, query, sourceTypes) : new Set<string>();
+  const missingSourceTypes = sourceTypes.filter((sourceType) => !covered.has(sourceType));
 
-  let fetched = 0;
-  let upserted = 0;
-  for (const sourceType of sourceTypes) {
-    const result = await fetchAndStoreSourceType(client, sourceType, query);
-    fetched += result.fetched;
-    upserted += result.upserted;
+  if (missingSourceTypes.length > 0) {
+    const { source, fetched } = await fetchApiSource(query, sourceTypes);
+    source.cumulativeTotals = await readCumulativeTotals(client, query);
+    return {
+      source,
+      storage: "api_pending_db",
+      fetched,
+      upserted: 0,
+      backgroundStore: () => storeApiSource(client, query, sourceTypes, source),
+    };
   }
 
   const source = await readWarehouseSource(client, query);
@@ -472,7 +552,7 @@ export async function getOrSyncDashboardV3Source(
     source.cumulativeTotals = await ensureCumulativeTotals(client, query);
     await writeSummaries(client, query, source);
   }
-  return { source, storage: "api_then_db", fetched, upserted };
+  return { source, storage: "db", fetched: 0, upserted: 0 };
 }
 
 function dateRange(startDate: string, endDate: string) {

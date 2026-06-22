@@ -62,8 +62,8 @@ const source: V3SourceBundle = {
         center_type: 2,
         name: "테스트0",
         contact: "010-0000-0000",
-        entered_at: "2025-01-02 10:00:00",
-        leaved_at: "2025-01-02 11:00:00",
+        entered_at: "2025-11-02 10:00:00",
+        leaved_at: "2025-11-02 11:00:00",
       },
       {
         center_type: 2,

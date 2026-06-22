@@ -1,4 +1,4 @@
-import { getOrSyncDashboardV3Source } from "../src/lib/dashboard-v3/warehouse";
+import { getOrSyncDashboardV3Source, syncDashboardV3Range } from "../src/lib/dashboard-v3/warehouse";
 import type { V3Query } from "../src/lib/dashboard-v3/types";
 
 async function main() {
@@ -10,10 +10,17 @@ async function main() {
   };
   const options = { totals: true };
 
+  const sync = await syncDashboardV3Range({
+    startDate: query.startDate,
+    endDate: query.endDate,
+    center: query.center,
+    triggeredBy: "test",
+    sourceTypes: ["total"],
+  });
   const first = await getOrSyncDashboardV3Source(query, options);
   const second = await getOrSyncDashboardV3Source(query, options);
 
-  if (first.storage !== "api_then_db" && first.storage !== "db") {
+  if (first.storage !== "db") {
     throw new Error(`first lookup used unexpected storage: ${first.storage}`);
   }
   if (second.storage !== "db") {
@@ -26,6 +33,7 @@ async function main() {
   console.log(
     JSON.stringify(
       {
+        sync,
         first: {
           storage: first.storage,
           fetched: first.fetched,

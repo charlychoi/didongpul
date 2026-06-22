@@ -36,7 +36,16 @@ type Point = { name: string; value: number; [key: string]: string | number };
 interface DashboardV3Data {
   period: { start: string; end: string };
   filters: { center: string | number };
-  sync: { lastFetchedAt: string; source: string; apiErrors: string[]; partial: boolean };
+  sync: {
+    lastFetchedAt: string;
+    source: string;
+    apiErrors: string[];
+    partial: boolean;
+    storage?: string;
+    dbWritePending?: boolean;
+    rowsFetched?: number;
+    rowsUpserted?: number;
+  };
   kpis?: Record<string, number>;
   charts?: Record<string, Point[] | Array<Record<string, string | number>>>;
   centers?: Array<Record<string, string | number>>;
@@ -477,7 +486,7 @@ export default function DashboardV3Client({ view }: { view: View }) {
       })
       .then((json) => {
         if (mounted) {
-          clientDataCache.set(apiUrl, json);
+          if (!json.sync?.dbWritePending) clientDataCache.set(apiUrl, json);
           setData(json);
           setError("");
         }
@@ -556,7 +565,7 @@ export default function DashboardV3Client({ view }: { view: View }) {
         <div>
           <p className="text-xs font-medium text-blue-700">누적 DB 대시보드 v3</p>
           <h1 className="text-2xl font-bold text-gray-900">{VIEW_LABEL[view]}</h1>
-          <p className="mt-1 text-sm text-gray-500">엑셀 업로드 없이 외부 API를 직접 조회합니다.</p>
+          <p className="mt-1 text-sm text-gray-500">누적 DB를 우선 조회하고, 필요한 데이터는 동기화로 보강합니다.</p>
         </div>
       </div>
 
@@ -590,11 +599,11 @@ export default function DashboardV3Client({ view }: { view: View }) {
           </button>
         </div>
         <div className="ml-auto text-xs text-gray-500">
-          마지막 API 조회: {data?.sync.lastFetchedAt ? new Date(data.sync.lastFetchedAt).toLocaleString("ko-KR") : "-"}
+          마지막 데이터 조회: {data?.sync.lastFetchedAt ? new Date(data.sync.lastFetchedAt).toLocaleString("ko-KR") : "-"}
         </div>
         {(loading || !data) && (
           <div className="rounded-md bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">
-            선택한 기간과 센터의 데이터량에 따라 조회 시간이 길어질 수 있습니다. 최초 조회 후에는 v3 캐시를 재사용합니다.
+            선택한 기간과 센터의 데이터량에 따라 조회 시간이 달라질 수 있습니다. v3 DB에 저장된 데이터는 우선 재사용합니다.
           </div>
         )}
       </div>
@@ -602,33 +611,42 @@ export default function DashboardV3Client({ view }: { view: View }) {
       {loading && (
         <div className="bg-white border border-blue-100 rounded-lg p-8 text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-600" />
-          <p className="mt-3 text-sm font-medium text-gray-800">외부 API 데이터를 불러오는 중입니다.</p>
+          <p className="mt-3 text-sm font-medium text-gray-800">v3 DB 데이터를 불러오는 중입니다.</p>
           <p className="mt-1 text-xs text-gray-500">
-            조회 범위와 API 데이터량에 따라 시간이 소요될 수 있습니다. 경과 시간 {elapsedSeconds}초
+            조회 범위와 저장된 데이터량에 따라 시간이 소요될 수 있습니다. 경과 시간 {elapsedSeconds}초
           </p>
           {elapsedSeconds >= 15 && (
             <p className="mt-2 text-xs text-blue-700">
-              현재 선택한 조건의 API 페이지를 순차 확인 중입니다. 첫 조회 후 동일 조건은 캐시되어 더 빠르게 열립니다.
+              현재 선택한 조건의 저장 데이터를 확인 중입니다. 동일 조건은 v3 캐시로 더 빠르게 열립니다.
             </p>
           )}
           {elapsedSeconds >= 45 && (
             <p className="mt-1 text-xs text-amber-700">
-              외부 API 응답이 지연되고 있습니다. 잠시 기다리거나 기간/센터 범위를 줄이면 더 빠르게 확인할 수 있습니다.
+              조회가 지연되고 있습니다. 잠시 기다리거나 기간/센터 범위를 줄이면 더 빠르게 확인할 수 있습니다.
             </p>
           )}
           {rangeDays >= 15 && (
             <div className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700">
               <Clock className="h-4 w-4" />
-              <span>조회 기간이 {rangeDays}일로 넓어 여러 API 페이지를 확인하고 있습니다.</span>
+              <span>조회 기간이 {rangeDays}일로 넓어 저장 데이터 확인에 시간이 걸릴 수 있습니다.</span>
             </div>
           )}
         </div>
       )}
       {error && <div className="bg-red-50 border border-red-100 rounded-lg p-4 text-sm text-red-700">{error}</div>}
-      {data?.sync.partial && (
+      {data?.sync.dbWritePending && (
+        <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800 flex gap-2">
+          <Loader2 className="h-4 w-4 shrink-0 mt-0.5 animate-spin" />
+          <span>
+            화면에는 외부 API 조회 결과를 먼저 표시했습니다. 같은 조건을 빠르게 다시 볼 수 있도록 v3 DB에 적재 중이며,
+            데이터량에 따라 몇 분 정도 걸릴 수 있습니다.
+          </span>
+        </div>
+      )}
+      {data?.sync.partial && !data.sync.dbWritePending && (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700 flex gap-2">
           <Info className="h-4 w-4 shrink-0 mt-0.5" />
-          <span>외부 API 연결이 일시적으로 지연된 항목이 있습니다. 새로고침하면 최신 상태를 다시 확인합니다.</span>
+          <span>선택한 조건의 일부 데이터가 아직 v3 DB에 모두 동기화되지 않았습니다. 동기화 후 최신 누적 데이터로 보강됩니다.</span>
         </div>
       )}
 
